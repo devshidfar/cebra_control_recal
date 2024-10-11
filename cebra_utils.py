@@ -93,48 +93,14 @@ def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
 
     plt.colorbar(scatter, label=f'{name_behav_var}')
     plt.show()
-# def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var,anim_save_path, save_anim, principal_curve=None):
-#     fig = plt.figure(figsize=(10, 8))
-#     ax = fig.add_subplot(111, projection='3d')
     
-#     scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], c=behav_var, cmap='viridis', s=5)
-#     if(principal_curve is not None):
-#         ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
-    
-#     ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
-#     ax.set_xlabel('Embedding Dimension 1')
-#     ax.set_ylabel('Embedding Dimension 2')
-#     ax.set_zlabel('Embedding Dimension 3')
-
-#     plt.colorbar(scatter, label=f'{name_behav_var}')
-
-#     def rotate(angle):
-#         ax.view_init(elev=10., azim=angle)
-#         return scatter,
-
-#     anim = FuncAnimation(fig, rotate, frames=np.arange(0, 360, 2), interval=50, blit=True)
-    
-#     if(anim):
-#         if save_anim:
-#             anim.save(f"{anim_save_path}_{name_behav_var}.gif", writer='pillow', fps=30)
-#         else:
-#             plt.show()
-
-#     return anim
-
-def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, anim_save_path, save_anim, principal_curve=None):
+def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var,anim_save_path, save_anim, principal_curve=None):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
-
-    # Plot the static scatter points
-    scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], c=behav_var, cmap='viridis', s=5)
     
-    # Plot the principal curve if provided
-    if principal_curve is not None:
+    scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], c=behav_var, cmap='viridis', s=5)
+    if(principal_curve is not None):
         ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
-
-    # Add a dynamic point to indicate the trajectory moving over time
-    dynamic_point, = ax.plot([], [], [], 'ro', markersize=8)  # 'ro' indicates a red point
     
     ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
     ax.set_xlabel('Embedding Dimension 1')
@@ -143,30 +109,22 @@ def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, a
 
     plt.colorbar(scatter, label=f'{name_behav_var}')
 
-    def update(frame):
-        # Slow down the point's movement by updating every Nth frame
-        point_index = frame // 10  # Adjust the divisor (10) to control speed, higher value = slower movement
-        point_index = min(point_index, len(embeddings_3d) - 1)  # Ensure the index does not exceed data length
+    def rotate(angle):
+        ax.view_init(elev=10., azim=angle)
+        return scatter,
 
-        # Update the moving point's position to match the current frame's embedding point
-        dynamic_point.set_data([embeddings_3d[point_index, 0]], [embeddings_3d[point_index, 1]])  # Ensure the data is a sequence
-        dynamic_point.set_3d_properties([embeddings_3d[point_index, 2]])  # Ensure the z-data is a sequence
-        ax.view_init(elev=10., azim=frame)  # Rotate the view
-        return dynamic_point, scatter
-
-    # Create the animation, combining the rotation and moving trajectory point
-    anim = FuncAnimation(fig, update, frames=np.arange(0, len(embeddings_3d) * 10), interval=100, blit=True)
-
-    if anim:
+    anim = FuncAnimation(fig, rotate, frames=np.arange(0, 360, 2), interval=50, blit=True)
+    
+    if(anim):
         if save_anim:
-            anim.save(f"{anim_save_path}_{name_behav_var}.gif", writer='pillow', fps=30)
+            anim.save(f"{anim_save_path}{name_behav_var}.gif", writer='pillow', fps=30)
         else:
             plt.show()
 
     return anim
 
 def apply_cebra(neural_data,output_dimensions,rm_outliers=True,max_iterations=None,batch_size=None):
-    model = cebra.CEBRA(output_dimension=3, max_iterations=1000, batch_size=128)
+    model = cebra.CEBRA(output_dimension=output_dimensions, max_iterations=1000, batch_size=128)
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
     print(embeddings.shape)
@@ -186,4 +144,53 @@ def plot_in_2d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
         # Plot the principal curve
         ax.plot(principal_curve[:, 0], principal_curve[:, 1], color='red', linewidth=2)
     plt.show()
+
+def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, session, hipp_angle_binned, true_angle_binned, principal_curve_2d, principal_curve_3d, save_path):
+    """
+    Plot CEBRA 2D, CEBRA 3D (projected to 2D), and UMAP 2D embeddings side by side.
+    
+    Parameters:
+    - embeddings_2d (np.ndarray): CEBRA 2D embeddings.
+    - embeddings_3d (np.ndarray): CEBRA 3D embeddings.
+    - umap_embeddings (np.ndarray): UMAP 2D embeddings.
+    - session: Session object containing metadata.
+    - hipp_angle_binned (np.ndarray): Binned hippocampal angles.
+    - true_angle_binned (np.ndarray): Binned true angles.
+    - principal_curve_2d (np.ndarray): Principal curve for CEBRA 2D.
+    - principal_curve_3d (np.ndarray): Principal curve for CEBRA 3D.
+    - save_path (str): Path to save the figure.
+    
+    Returns:
+    - None
+    """
+    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
+
+    # CEBRA 2D Embedding
+    sc1 = axes[0].scatter(embeddings_2d[:,0], embeddings_2d[:,1], c=hipp_angle_binned % 360, cmap='viridis', s=10)
+    axes[0].plot(principal_curve_2d[:,0], principal_curve_2d[:,1], color='red', linewidth=2)
+    axes[0].set_title('CEBRA 2D Embedding')
+    axes[0].set_xlabel('Dimension 1')
+    axes[0].set_ylabel('Dimension 2')
+    plt.colorbar(sc1, ax=axes[0], label='Hipp Angle (°)')
+
+    # CEBRA 3D Embedding projected to 2D
+    sc2 = axes[1].scatter(embeddings_3d[:,0], embeddings_3d[:,1], c=true_angle_binned % 360, cmap='plasma', s=10)
+    axes[1].plot(principal_curve_3d[:,0], principal_curve_3d[:,1], color='red', linewidth=2)
+    axes[1].set_title('CEBRA 3D Embedding (Projected to 2D)')
+    axes[1].set_xlabel('Dimension 1')
+    axes[1].set_ylabel('Dimension 2')
+    plt.colorbar(sc2, ax=axes[1], label='True Angle (°)')
+
+    # UMAP 2D Embedding
+    sc3 = axes[2].scatter(umap_embeddings[:,0], umap_embeddings[:,1], c=true_angle_binned % 360, cmap='inferno', s=10)
+    axes[2].set_title('UMAP 2D Embedding')
+    axes[2].set_xlabel('UMAP Dimension 1')
+    axes[2].set_ylabel('UMAP Dimension 2')
+    plt.colorbar(sc3, ax=axes[2], label='True Angle (°)')
+
+    plt.suptitle(f"Rat {session.rat}, Day {session.day}, Epoch {session.epoch}", fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved embedding plots to {save_path}")
 
