@@ -11,6 +11,7 @@ from pandas import cut
 from sklearn.cluster import KMeans
 from scipy.optimize import minimize
 from sklearn.neighbors import NearestNeighbors
+from sklearn.manifold import Isomap
 
 import angle_fns as af
 import fit_helper_fns as fhf
@@ -34,9 +35,16 @@ class PiecewiseLinearFit:
 
     def get_new_initial_knots(self, method='kmeans'):
         '''Place the initial knots for the optimization to use.'''
+        print(f"Initial knot method: {method}")
         if method == 'kmeans':
-            kmeans = KMeans(n_clusters=self.nKnots, max_iter=300).fit(self.data_to_fit)
+            kmeans = KMeans(n_clusters=self.nKnots, max_iter=3000).fit(self.data_to_fit)
             return kmeans.cluster_centers_
+        # elif method == 'isomap':
+        #     isomap = Isomap(n_components=1)
+        #     data_1d = isomap.fit_transform(self.data_to_fit)
+        #     # Select knots evenly along the 1D manifold
+        #     indices = np.linspace(0, len(data_1d) - 1, self.nKnots, dtype=int)
+        #     return self.data_to_fit[indices]
         else:
             print('Unknown method')
 
@@ -90,6 +98,16 @@ class PiecewiseLinearFit:
                 cost = np.sum(dists) * self.tot_len(loop_knots)
             elif penalty_params['penalty_type'] == 'add_len': 
                 cost = np.mean(dists) + penalty_params['len_coeff'] * self.tot_len(loop_knots)
+            elif penalty_params['penalty_type'] == 'curvature': 
+                # Compute curvature penalty
+                segments = loop_knots[1:] - loop_knots[:-1]
+                norms = np.linalg.norm(segments, axis=1)[:, np.newaxis]
+                norms[norms == 0] = 1e-8
+                unit_vectors = segments / norms
+                diffs = unit_vectors[1:] - unit_vectors[:-1]
+                curvature_penalty = np.sum(np.linalg.norm(diffs, axis=1) ** 2)
+                curvature_coeff = penalty_params['curvature_coeff']
+                cost = np.sum(dists) + penalty_params['len_coeff'] * self.tot_len(loop_knots) + curvature_coeff * curvature_penalty
             return cost
         
         init_knots = fit_params['init_knots']

@@ -16,6 +16,7 @@ import seaborn as sns; sns.set()
 import timeit
 from scipy.interpolate import splprep, splev
 from scipy.spatial import distance_matrix
+from sklearn.neighbors import LocalOutlierFactor
 
 def nt_TDA(data, pct_distance=1, pct_neighbors=20):
   
@@ -37,32 +38,90 @@ def nt_TDA(data, pct_distance=1, pct_neighbors=20):
     cleaned_data = np.delete(data, outlier_indices, axis=0)
     
     return cleaned_data, outlier_indices
-def fit_spud_to_cebra(embeddings_3d, nKnots=20, knot_order='wt_per_len', penalty_type='mult_len', length_penalty=5):
+
+def fit_spud_to_cebra(embeddings_3d, nKnots=20, knot_order='nearest', penalty_type='curvature', length_penalty=5):
     # Set up the fit parameters, taken base from Chaudhuri et al.
     fit_params = {
         'dalpha': 0.005,
         'knot_order': knot_order,
         'penalty_type': penalty_type,
         'nKnots': nKnots,
-        'length_penalty': length_penalty
+        'length_penalty': length_penalty,
+        'curvature_coeff': 5,
+        'len_coeff': 1
     }
 
+
+    lof = LocalOutlierFactor(n_neighbors=5, contamination = 0.1)
+    is_inlier = lof.fit_predict(embeddings_3d) == 1
+    embeddings_3d_inliers = embeddings_3d[is_inlier]
+
     # Create fitter object
-    fitter = mff.PiecewiseLinearFit(embeddings_3d, fit_params)
+    fitter = mff.PiecewiseLinearFit(embeddings_3d_inliers, fit_params)
     
     # Get initial knots
     unord_knots = fitter.get_new_initial_knots()
     init_knots = fitter.order_knots(unord_knots, method=fit_params['knot_order'])
     
     # Fit the data
-    curr_fit_params = {'init_knots': init_knots, 'penalty_type': fit_params['penalty_type']}
+    curr_fit_params = {'init_knots': init_knots, 'penalty_type': fit_params['penalty_type'], 'len_coeff': fit_params['len_coeff'],'curvature_coeff': fit_params['curvature_coeff']}
     fitter.fit_data(curr_fit_params)
+
+    # Get the final knots
+    final_knots = fitter.saved_knots[0]['knots']
+    final_knots_pre = final_knots
+    print(f"final knots: {final_knots}")
     
-    # Get the final curve
-    loop_final_knots = fhf.loop_knots(fitter.saved_knots[0]['knots'])
+    segments = np.vstack((final_knots[1:] - final_knots[:-1], final_knots[0] - final_knots[-1]))
+    knot_dists = np.linalg.norm(segments, axis=1)
+    print(f"knot_dists: {knot_dists}")
+    max_dist = np.max(knot_dists)
+    max_dist_idx = np.argmax(knot_dists)
+    nKnots = final_knots.shape[0]
+    if max_dist_idx < nKnots - 1:
+        idx1 = max_dist_idx
+        idx2 = max_dist_idx + 1
+    else:
+        # The segment is between the last knot and the first knot
+        idx1 = nKnots - 1
+        idx2 = 0
+
+    print(f"The largest distance between consecutive knots is {max_dist}, "
+          f"between knot {max_dist_idx} and knot {max_dist_idx + 1}")
+
+    knot1 = final_knots[idx1]
+    knot2 = final_knots[idx2]
+    print(f"Knot {max_dist_idx}: {knot1}")
+    print(f"Knot {max_dist_idx + 1}: {knot2}")
+
+    # from sklearn.neighbors import NearestNeighbors
+    # neighbgraph = NearestNeighbors(n_neighbors=1).fit(embeddings_3d_inliers)
+    # knot_dists_to_data, _ = neighbgraph.kneighbors(final_knots)
+    # knot_dists_to_data = knot_dists_to_data.flatten()
+
+    # # Decide which knot to remove
+    # if knot_dists_to_data[idx1] > knot_dists_to_data[idx2]:
+    #     knot_to_remove = idx1
+    # else:
+    #     knot_to_remove = idx2
+    
+    if max_dist > 1.5*np.median(knot_dists):
+        print(f"Removing outlier knot at index {max_dist_idx} with distance {max_dist}")
+        # Remove the knot
+        final_knots = np.delete(final_knots, max_dist_idx, axis=0)
+    else:
+        print("No outlier knot found; proceeding without removing any knots.")
+
+    # Adjust the number of knots
+    nKnots = final_knots.shape[0]
+
+    # Reconstruct the spline
+    loop_final_knots = fhf.loop_knots(final_knots)
+    loop_final_knots_pre = fhf.loop_knots(final_knots_pre)
     tt, curve = fhf.get_curve_from_knots(loop_final_knots, 'eq_vel')
-    
-    return curve, tt
+    _, curve_pre = fhf.get_curve_from_knots(loop_final_knots_pre, 'eq_vel')
+    return curve, curve_pre, tt
+
 def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
     fig = plt.figure(figsize=(10, 8))
     
@@ -144,6 +203,8 @@ def plot_in_2d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
         # Plot the principal curve
         ax.plot(principal_curve[:, 0], principal_curve[:, 1], color='red', linewidth=2)
     plt.show()
+
+def plot_velocity_near_spline()
 
 def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, session, hipp_angle_binned, true_angle_binned, principal_curve_2d, principal_curve_3d, save_path):
     """
