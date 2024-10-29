@@ -1,9 +1,10 @@
 import sys
 import os
 import cebra
-sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/shared_scripts")
-import manifold_fit_and_decode_fns as mff
-import fit_helper_fns as fhf
+sys.path.remove("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/shared_scripts")
+sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/spud_code/shared_scripts")
+import manifold_fit_and_decode_fns_custom as mff
+import fit_helper_fns_custom as fhf
 import numpy as np
 import scipy.io
 import cebra
@@ -21,6 +22,8 @@ from scipy.spatial import KDTree
 from scipy.interpolate import interp1d
 from ripser import ripser
 from persim import plot_diagrams
+import umap.umap_ as umap
+from sklearn.manifold import TSNE
 
 def run_persistent_homology(embeddings, session_idx, session, results_save_path, dimension):
     """
@@ -135,25 +138,73 @@ def run_persistent_homology(embeddings, session_idx, session, results_save_path,
 
 
 
-def nt_TDA(data, pct_distance=1, pct_neighbors=20):
-  
+def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
     # Compute the pairwise distance matrix
     distances = distance_matrix(data, data)
+    np.fill_diagonal(distances, 10)
+    print("Pairwise distance matrix computed.")
+    print(f"Distance matrix shape: {distances.shape}")
+    print(f"Sample distances (first 5 rows, first 5 columns):\n{distances[:5, :5]}\n")
     
-    # Determine the neighborhood radius for each point based on the 1st percentile of distances
-    neighborhood_radius = np.percentile(distances, pct_distance, axis=1)
+    # Determine the neighborhood radius for each point based on the pct_distance percentile of distances
+    neighborhood_radius = np.percentile(distances, pct_distance, axis=0)
+    print(f"Neighborhood radius calculated using the {pct_distance}th percentile.")
+    print(f"Neighborhood radius statistics:")
+    print(f"  Min: {neighborhood_radius.min()}")
+    print(f"  Max: {neighborhood_radius.max()}")
+    print(f"  Mean: {neighborhood_radius.mean():.4f}")
+    print(f"  Median: {np.median(neighborhood_radius):.4f}\n")
     
     # Count the number of neighbors for each point within the neighborhood radius
     neighbor_counts = np.sum(distances <= neighborhood_radius[:, None], axis=1)
+    print("Neighbor counts computed for each point.")
+    print(f"Neighbor counts statistics:")
+    print(f"  Min: {neighbor_counts.min()}")
+    print(f"  Max: {neighbor_counts.max()}")
+    print(f"  Mean: {neighbor_counts.mean():.2f}")
+    print(f"  Median: {np.median(neighbor_counts)}")
+    print(f"  Example neighbor counts (first 10 points): {neighbor_counts[:50]}\n")
     
-    # Identify points with a neighbor count below the 20th percentile
+    # Identify points with a neighbor count below the pct_neighbors percentile
     threshold_neighbors = np.percentile(neighbor_counts, pct_neighbors)
+    print(f"Threshold for neighbor counts set at the {pct_neighbors}th percentile: {threshold_neighbors}")
+    
     outlier_indices = np.where(neighbor_counts < threshold_neighbors)[0]
+    print(f"Outliers based on neighbor counts (count={len(outlier_indices)}): {outlier_indices}\n")
     
-    # Remove outliers from the data
-    cleaned_data = np.delete(data, outlier_indices, axis=0)
+    # consider points as outliers if they are too far from any other points
+    from sklearn.neighbors import NearestNeighbors
+    neighbgraph = NearestNeighbors(n_neighbors=5).fit(distances)
+    dists, inds = neighbgraph.kneighbors(distances)
+    min_distance_to_any_point = np.mean(dists, axis=1)
+    print("Minimum distance to any other point calculated for each point.")
+
+
+    print(f"Minimum distance statistics:")
+    print(f"  Min: {min_distance_to_any_point.min()}")
+    print(f"  Max: {min_distance_to_any_point.max()}")
+    print(f"  Mean: {min_distance_to_any_point.mean():.4f}")
+    print(f"  Median: {np.median(min_distance_to_any_point):.4f}\n")
     
-    return cleaned_data, outlier_indices
+    distance_threshold = np.percentile(min_distance_to_any_point, pct_dist)
+    print(f"Distance threshold set at the {pct_dist}th percentile: {distance_threshold}")
+    
+    far_outliers = np.where(min_distance_to_any_point > distance_threshold)[0]
+    print(f"Outliers based on distance threshold (count={len(far_outliers)}): {far_outliers}\n")
+    
+    # Combine with other outliers
+    outlier_indices = np.unique(np.concatenate([outlier_indices, far_outliers]))
+    print(f"Total outliers detected after combining criteria (count={len(outlier_indices)}): {outlier_indices}\n")
+    
+    # Compute inlier indices as all indices not in outlier_indices
+    all_indices = np.arange(data.shape[0])
+    inlier_indices = np.setdiff1d(all_indices, outlier_indices)
+    print(f"Total inliers detected (count={len(inlier_indices)}): {inlier_indices}\n")
+    
+    # # Remove outliers from the data
+    # cleaned_data = np.delete(data, outlier_indices, axis=0)
+    
+    return inlier_indices
 
 def plot_time_vs_distance(embeddings, principal_curve, times,x_axis_var, annotate_var, annotate_var_name,session,session_idx, bin_size, dimension, save_path=None):
     """
@@ -195,44 +246,75 @@ def plot_time_vs_distance(embeddings, principal_curve, times,x_axis_var, annotat
     else:
         plt.show()
 
-def fit_spud_to_cebra(embeddings_3d, ref_angles=None, nKnots=20, knot_order='nearest', penalty_type='curvature', length_penalty=5,hippocampal_angle_origin=None):
-    # Set up the fit parameters, taken base from Chaudhuri et al.
+def plot_initial_knots(data_points, init_knots, session_idx, session, save_path=None):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot data points
+    ax.scatter(data_points[:, 0], data_points[:, 1], data_points[:, 2],
+               c='gray', s=5, alpha=0.5, label='Data Points')
+
+    # Plot initial knots
+    ax.scatter(init_knots[:, 0], init_knots[:, 1], init_knots[:, 2],
+               c='red', s=100, marker='^', label='Initial Knots')
+
+    ax.set_title(f'Initial Knots - Session {session_idx}\nRat {session.rat}, Day {session.day}, Epoch {session.epoch}')
+    ax.set_xlabel('Embedding Dimension 1')
+    ax.set_ylabel('Embedding Dimension 2')
+    ax.set_zlabel('Embedding Dimension 3')
+    ax.legend()
+
+    if save_path:
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Saved initial knots plot to {save_path}")
+    else:
+        plt.show()
+
+
+def fit_spud_to_cebra(embeddings, ref_angles=None, nKnots=15, knot_order='nearest', penalty_type='length',hippocampal_angle_origin=None,session_idx=None, session=None, results_save_path=None,dimension_3d=None):
+#     # Set up the fit parameters, taken base from Chaudhuri et al.
     fit_params = {
         'dalpha': 0.005,
         'knot_order': knot_order,
-        'penalty_type': penalty_type,
+        'penalty_type': penalty_type, #note that curvature penalty penalizes both curvature and length * len_coeff
         'nKnots': nKnots,
-        'length_penalty': length_penalty,
-        'curvature_coeff': 5,
-        'len_coeff': 1
+        'curvature_coeff': 10,
+        'len_coeff': 2,
+        'density_coeff': 2
     }
 
-
-    lof = LocalOutlierFactor(n_neighbors=5, contamination = 0.1)
-    is_inlier = lof.fit_predict(embeddings_3d) == 1
-    embeddings_3d_inliers = embeddings_3d[is_inlier]
-
-    if ref_angles is not None:
-        # Use reference angles to guide the fitting process
-        ref_angles_inliers = ref_angles[is_inlier]
-
-    tree = KDTree(embeddings_3d_inliers)
-    dist, _ = tree.query(embeddings_3d_inliers, k=6)  # Get distances to the 5 nearest neighbors
-    avg_dist = np.mean(dist[:, 1:], axis=1)  # Average distance to nearest neighbors (excluding self)
-
-    # Apply a threshold to remove points that are too far from their neighbors
-    density_threshold = np.percentile(avg_dist, 75)  # Adjust threshold as needed (e.g., 75th percentile)
-    dense_points = embeddings_3d_inliers[avg_dist < density_threshold]
     
+
+    print(f"dense points: {embeddings}")
     # Create fitter object
-    fitter = mff.PiecewiseLinearFit(dense_points, fit_params)
+    fitter = mff.PiecewiseLinearFit(embeddings, fit_params)
     # Get initial knots
-    unord_knots = fitter.get_new_initial_knots()
+    print("made it here")
+    unord_knots = fitter.get_new_initial_knots(method = 'kmedoids')
    
     init_knots = fitter.order_knots(unord_knots, method=fit_params['knot_order'])
+
+    ######
+
+    # **Plot the initial knots**
+    # Define the save path for the plot
+    if dimension_3d == 1:
+        if results_save_path:
+            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.png")
+        else:
+            plot_save_path = None  # Set to None to display the plot instead of saving
+
+        # Call the plotting function
+        plot_initial_knots(embeddings, init_knots, session_idx, session, save_path=plot_save_path)
+
+    ######
     
     # Fit the data
-    curr_fit_params = {'init_knots': init_knots, 'penalty_type': fit_params['penalty_type'], 'len_coeff': fit_params['len_coeff'],'curvature_coeff': fit_params['curvature_coeff']}
+    curr_fit_params = {'init_knots': init_knots, **fit_params}
     fitter.fit_data(curr_fit_params)
 
     # Get the final knots
@@ -254,8 +336,8 @@ def fit_spud_to_cebra(embeddings_3d, ref_angles=None, nKnots=20, knot_order='nea
         idx1 = nKnots - 1
         idx2 = 0
 
-    # print(f"The largest distance between consecutive knots is {max_dist}, "
-    #       f"between knot {max_dist_idx} and knot {max_dist_idx + 1}")
+    print(f"The largest distance between consecutive knots is {max_dist}, "
+          f"between knot {max_dist_idx} and knot {max_dist_idx + 1}")
 
     # knot1 = final_knots[idx1]
     # knot2 = final_knots[idx2]
@@ -279,15 +361,20 @@ def fit_spud_to_cebra(embeddings_3d, ref_angles=None, nKnots=20, knot_order='nea
     tt, curve = fhf.get_curve_from_knots(loop_final_knots, 'eq_vel')
     _, curve_pre = fhf.get_curve_from_knots(loop_final_knots_pre, 'eq_vel')
 
+    print(f"form of tt in fit_spud_to_cebra: {np.max(tt)-np.min(tt)}")
+    print(f"form of hippangle in fit_spud_to_cebra: {np.max(ref_angles)-np.min(ref_angles)}")
+
     if ref_angles is not None and hippocampal_angle_origin is not None:
         # Find the index of the closest hippocampal angle to the desired origin
-        origin_idx = np.argmin(np.abs(ref_angles_inliers - hippocampal_angle_origin))
+        origin_idx = np.argmin(np.abs(ref_angles - hippocampal_angle_origin))
+
+        tt = tt * 2*(np.pi)
 
         # Shift the tt values so that the origin is aligned with tt = 0
         tt_shifted = np.mod(tt - tt[origin_idx], 2 * np.pi)  # Keep tt in the [0, 2*pi] range
 
         tt_diff = np.diff(tt_shifted)
-        angle_diff = np.diff(ref_angles_inliers)
+        angle_diff = np.diff(ref_angles)
 
         # Check if the signs of the slopes match, if not, reverse the tt and curve
         if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
@@ -303,10 +390,12 @@ def fit_spud_to_cebra(embeddings_3d, ref_angles=None, nKnots=20, knot_order='nea
 
     if ref_angles is not None:
         # Use the `decode_from_spline_fit` function (similar to `decode_from_passed_fit`)
-        decoded_angles, mse = mff.decode_from_passed_fit(embeddings_3d_inliers, tt[:-1], curve[:-1], ref_angles_inliers)
+        decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], curve[:-1], ref_angles)
         print(f"Decoded circular MSE: {mse}")
         return curve, curve_pre, tt, decoded_angles, mse
+    
     return curve, curve_pre, tt
+
 
 def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
     fig = plt.figure(figsize=(10, 8))
@@ -339,7 +428,7 @@ def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
     plt.colorbar(scatter, label=f'{name_behav_var}')
     plt.show()
     
-# def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var,anim_save_path, save_anim, principal_curve=None):
+# def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, anim_save_path, save_anim, principal_curve=None):
 #     fig = plt.figure(figsize=(10, 8))
 #     ax = fig.add_subplot(111, projection='3d')
     
@@ -368,7 +457,7 @@ def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
 
 #     return anim
 
-def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, anim_save_path, save_anim, principal_curve=None, tt=None, num_labels=10):
+def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10):
     """
     Plots a 3D rotating plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline.
@@ -387,22 +476,32 @@ def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, a
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
 
-    tt=tt*2*np.pi
+    print(f"Range of behav_var: {np.min(behav_var) - np.max(behav_var)}")
+    print(f"Range of parameter: {np.max(tt) - np.min(tt)}")
+    print("Number of NaNs in behav_var:", np.sum(np.isnan(behav_var)))
+    print("Number of Infs in behav_var:", np.sum(np.isinf(behav_var)))
+    print("Number of NaNs in tt:", np.sum(np.isnan(tt)))
+    print("Number of Infs in tt:", np.sum(np.isinf(tt)))
 
-    # Normalize `behav_var` and `tt` to use the same color scale
-    norm = plt.Normalize(vmin=np.min(behav_var), vmax=np.max(behav_var))
-    cmap = plt.get_cmap('viridis')  # Same color map for both scatter and spline
+    # valid_indices = ~np.isnan(behav_var) & ~np.isnan(embeddings_3d).any(axis=1)
+    # behav_var = behav_var[valid_indices]
+    # embeddings_3d = embeddings_3d[valid_indices]
+
+    # # Normalize `behav_var` and `tt` to use the same color scale
+    cmap = plt.get_cmap('viridis')
+    norm = plt.Normalize(vmin=np.min(tt), vmax=np.max(tt))
 
     # Scatter plot of embeddings using behav_var as color map
     scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], 
-                         c=behav_var, cmap=cmap, norm=norm, s=5)
+                         c=behav_var, cmap=cmap, s=5)
     plt.colorbar(scatter, label=f'{name_behav_var}')
 
-    # Plot the principal curve with the same color map, colored by `tt` values
+    #Plot the principal curve with the same color map, colored by `tt` values
     if principal_curve is not None and tt is not None:
         for i in range(len(principal_curve) - 1):
+            color = cmap(norm(tt[i]))  # Assign color based on normalized tt
             ax.plot(principal_curve[i:i+2, 0], principal_curve[i:i+2, 1], principal_curve[i:i+2, 2], 
-                    color=cmap(norm(tt[i])), linewidth=2)
+                    color=color, linewidth=2)
 
         # Add labels at evenly spaced points along the spline
         label_indices = np.linspace(0, len(principal_curve) - 1, num_labels, dtype=int)
@@ -431,15 +530,23 @@ def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, a
 
     return anim
 
-def apply_cebra(neural_data,output_dimensions,rm_outliers=True,max_iterations=None,batch_size=None):
+def apply_cebra(neural_data,output_dimensions,max_iterations=None,batch_size=None):
     model = cebra.CEBRA(output_dimension=output_dimensions, max_iterations=1000, batch_size=128)
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
-    print(embeddings.shape)
-    if(rm_outliers):
-        embeddings, outlier_indices = nt_TDA(embeddings)
-    print(f"Output embeddings shape: {embeddings.shape}")
     return embeddings
+
+def dist_tot_to_princ_curve(embeddings=None,principal_curve=None):
+        # Compute distances from embeddings to the principal curve
+        distances = compute_min_distances(embeddings, principal_curve)
+
+        # Calculate the mean distance
+        mean_distance = np.mean(distances)
+
+        print(f"The mean distance from the embeddings to the principal curve is: {mean_distance}")
+        print(f"The min distance from the embeddings to the principal curve is: {np.min(distances)}")
+        print(f"The max distance from the embeddings to the principal curve is: {np.max(distances)}")
+
 def plot_in_2d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
     fig, ax = plt.subplots(figsize=(10,8))
     # 2D plot
@@ -555,4 +662,131 @@ def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, 
     plt.savefig(save_path)
     plt.close()
     print(f"Saved embedding plots to {save_path}")
+    
+    return
+
+
+def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,true_angle_binned,principal_curve_2d,principal_curve_3d,session,session_idx,results_save_path):
+    # Compute UMAP embeddings
+    print("Computing UMAP embeddings...")
+    umap_reducer = umap.UMAP(n_components=2, random_state=42)
+    umap_embeddings = umap_reducer.fit_transform(neural_data)
+    print(f"UMAP embeddings shape: {umap_embeddings.shape}")
+
+    # Plot UMAP embeddings side by side
+    plot_save_path = os.path.join(results_save_path, f"session_{session_idx + 1}_embeddings.png")
+    plot_embeddings_side_by_side(
+        embeddings_2d=embeddings_2d,
+        embeddings_3d=embeddings_3d,
+        umap_embeddings=umap_embeddings,
+        session=session,
+        hipp_angle_binned=hipp_angle_binned,
+        true_angle_binned=true_angle_binned,
+        principal_curve_3d=principal_curve_3d,
+        save_path=plot_save_path
+    )
+
+    # Perform t-SNE embedding
+    print("Performing t-SNE embedding...")
+    tsne = TSNE(n_components=2, perplexity=30, random_state=42)
+    tsne_embeddings = tsne.fit_transform(neural_data)
+    print(f"t-SNE embeddings shape: {tsne_embeddings.shape}")
+
+    # Plot t-SNE embeddings
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], s=10, c=(hipp_angle_binned % 360), cmap='viridis')
+    plt.title('t-SNE Visualization')
+    plt.xlabel('Component 1')
+    plt.ylabel('Component 2')
+    cbar = plt.colorbar(scatter)
+    cbar.set_label('Hippocampal Angle (degrees)')
+    plt.show()
+    print("Displayed t-SNE plot.")
+
+    return
+
+
+def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None):
+    
+    # Extract embeddings at t0 and t1
+    embedding_t0 = embeddings[t0].reshape(1, -1)  # Reshape to (1, n) for knn
+    embedding_t1 = embeddings[t1].reshape(1, -1)
+
+    # Use get_closest_manifold_coords to find nearest manifold points
+    input_coords_0,dists_from_mani_0,tt_index0 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t0, return_all = True)
+    input_coords_0,dists_from_mani_0,tt_index1 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t1, return_all = True)
+    #now find euclidean nearest point to spline from each embedding point
+
+    #will get tt_index1,tt_index0
+
+    tt_index0 = 20
+    tt_index1 = 25
+
+    H = (tt[tt_index1] - tt[tt_index0])/(true_angle[t1]-true_angle[t0])
+
+    return H
+
+
+def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None):
+    
+    H_list = []
+    for i in range(len(embeddings)-1):
+        t0 = i
+        t1 = i+1
+        H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle)
+        H_list.append(H_temp)
+    
+    return np.array(H_list)
+
+def plot_decode_H_vs_true_H(est_gain=None, decode_gain=None, session_idx=None, session=None, save_path=None):
+    """
+    Plots est_gain and decode_gain using array indices as time points.
+
+    Parameters:
+    - est_gain (np.ndarray): Array of estimated gain values.
+    - decode_gain (np.ndarray): Array of decoded gain values.
+    - session_idx (int, optional): Session index for labeling purposes.
+    - session (object, optional): Session object containing metadata.
+    - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
+    """
+    # Find the overlapping range of indices
+    min_length = min(len(est_gain), len(decode_gain))
+
+    # Trim est_gain and decode_gain to the overlapping range
+    est_gain_trimmed = est_gain[:min_length]
+    decode_gain_trimmed = decode_gain[:min_length]
+    times = np.arange(min_length)  # Time is just the index
+
+    # Plotting
+    plt.figure(figsize=(12, 6))
+    plt.plot(times, est_gain_trimmed, label='Estimated Gain', color='blue')
+    plt.plot(times, decode_gain_trimmed, label='Decoded Gain', color='red', alpha=0.7)
+
+    plt.xlabel('Time (s)', fontsize=14)
+    plt.ylabel('Gain', fontsize=14)
+    title = 'FT gain vs spline decoded Gain'
+    if session_idx is not None and session is not None:
+        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+    plt.title(title, fontsize=16)
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+
+    # Save or show the plot
+    if save_path:
+        save_path = f'{save_path}/h_plots'
+        os.makedirs(save_path, exist_ok=True)
+        plt.savefig(f"{save_path}/plot.png", dpi=300)
+        plt.close()
+       
+        print(f"Saved plot to {save_path}")
+    else:
+        plt.show()
+
+
+
+        
+
+
+
 
