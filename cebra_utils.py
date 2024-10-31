@@ -1,7 +1,6 @@
 import sys
 import os
 import cebra
-sys.path.remove("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/shared_scripts")
 sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/spud_code/shared_scripts")
 import manifold_fit_and_decode_fns_custom as mff
 import fit_helper_fns_custom as fhf
@@ -275,19 +274,9 @@ def plot_initial_knots(data_points, init_knots, session_idx, session, save_path=
         plt.show()
 
 
-def fit_spud_to_cebra(embeddings, ref_angles=None, nKnots=15, knot_order='nearest', penalty_type='length',hippocampal_angle_origin=None,session_idx=None, session=None, results_save_path=None,dimension_3d=None):
+def fit_spud_to_cebra(embeddings, ref_angles=None,hippocampal_angle_origin=None,session_idx=None, 
+                       session=None, results_save_path=None,fit_params=None,dimension_3d=None):
 #     # Set up the fit parameters, taken base from Chaudhuri et al.
-    fit_params = {
-        'dalpha': 0.005,
-        'knot_order': knot_order,
-        'penalty_type': penalty_type, #note that curvature penalty penalizes both curvature and length * len_coeff
-        'nKnots': nKnots,
-        'curvature_coeff': 10,
-        'len_coeff': 2,
-        'density_coeff': 2
-    }
-
-    
 
     print(f"dense points: {embeddings}")
     # Create fitter object
@@ -315,6 +304,7 @@ def fit_spud_to_cebra(embeddings, ref_angles=None, nKnots=15, knot_order='neares
     
     # Fit the data
     curr_fit_params = {'init_knots': init_knots, **fit_params}
+    print(f"curr_fit_params: {curr_fit_params}")
     fitter.fit_data(curr_fit_params)
 
     # Get the final knots
@@ -428,36 +418,8 @@ def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
     plt.colorbar(scatter, label=f'{name_behav_var}')
     plt.show()
     
-# def create_rotating_3d_plot(embeddings_3d, session, behav_var, name_behav_var, anim_save_path, save_anim, principal_curve=None):
-#     fig = plt.figure(figsize=(10, 8))
-#     ax = fig.add_subplot(111, projection='3d')
-    
-#     scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], c=behav_var, cmap='viridis', s=5)
-#     if(principal_curve is not None):
-#         ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
-    
-#     ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
-#     ax.set_xlabel('Embedding Dimension 1')
-#     ax.set_ylabel('Embedding Dimension 2')
-#     ax.set_zlabel('Embedding Dimension 3')
 
-#     plt.colorbar(scatter, label=f'{name_behav_var}')
-
-#     def rotate(angle):
-#         ax.view_init(elev=10., azim=angle)
-#         return scatter,
-
-#     anim = FuncAnimation(fig, rotate, frames=np.arange(0, 360, 2), interval=50, blit=True)
-    
-#     if(anim):
-#         if save_anim:
-#             anim.save(f"{anim_save_path}{name_behav_var}.gif", writer='pillow', fps=30)
-#         else:
-#             plt.show()
-
-#     return anim
-
-def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10):
+def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10,mean_dist=None):
     """
     Plots a 3D rotating plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline.
@@ -509,6 +471,17 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
             x, y, z = principal_curve[idx]
             ax.text(x, y, z, f'tt={tt[idx]:.2f}', color='black', fontsize=8)
 
+    #add mean dist
+    if mean_dist is not None:
+        # Position: (x, y) in figure coordinates [0,1]
+        fig.text(
+            0.05, 0.95,
+            f'Mean Distance from spline: {mean_dist:.2f}',
+            fontsize=12,
+            verticalalignment='top',
+            bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=5)
+        )
+
     ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
     ax.set_xlabel('Embedding Dimension 1')
     ax.set_ylabel('Embedding Dimension 2')
@@ -530,8 +503,8 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
 
     return anim
 
-def apply_cebra(neural_data,output_dimensions,max_iterations=None,batch_size=None):
-    model = cebra.CEBRA(output_dimension=output_dimensions, max_iterations=1000, batch_size=128)
+def apply_cebra(neural_data,output_dimensions,max_iterations=None,batch_size=None,temperature=1):
+    model = cebra.CEBRA(output_dimension=output_dimensions, max_iterations=1000, batch_size=128,temperature=2)
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
     return embeddings
@@ -546,6 +519,8 @@ def dist_tot_to_princ_curve(embeddings=None,principal_curve=None):
         print(f"The mean distance from the embeddings to the principal curve is: {mean_distance}")
         print(f"The min distance from the embeddings to the principal curve is: {np.min(distances)}")
         print(f"The max distance from the embeddings to the principal curve is: {np.max(distances)}")
+
+        return mean_distance
 
 def plot_in_2d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
     fig, ax = plt.subplots(figsize=(10,8))
@@ -719,9 +694,6 @@ def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, 
 
     #will get tt_index1,tt_index0
 
-    tt_index0 = 20
-    tt_index1 = 25
-
     H = (tt[tt_index1] - tt[tt_index0])/(true_angle[t1]-true_angle[t0])
 
     return H
@@ -729,16 +701,24 @@ def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, 
 
 def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None):
     
+    num_avg_over = 4
+    spacing = 2
     H_list = []
-    for i in range(len(embeddings)-1):
-        t0 = i
-        t1 = i+1
-        H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle)
+    for i in range(((len(embeddings)-1)-num_avg_over)//spacing):
+
+        H_temp_list = []
+        t0 = i + spacing
+        for j in range(num_avg_over):
+            t1 = i + j + spacing
+            H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle)
+            H_temp_list.append(H_temp)
+
+        H_temp = np.mean(H_temp_list)
         H_list.append(H_temp)
     
     return np.array(H_list)
 
-def plot_decode_H_vs_true_H(est_gain=None, decode_gain=None, session_idx=None, session=None, save_path=None):
+def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session=None, save_path=None):
     """
     Plots est_gain and decode_gain using array indices as time points.
 
@@ -750,11 +730,11 @@ def plot_decode_H_vs_true_H(est_gain=None, decode_gain=None, session_idx=None, s
     - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
     """
     # Find the overlapping range of indices
-    min_length = min(len(est_gain), len(decode_gain))
+    min_length = min(len(est_H), len(decode_H))
 
     # Trim est_gain and decode_gain to the overlapping range
-    est_gain_trimmed = est_gain[:min_length]
-    decode_gain_trimmed = decode_gain[:min_length]
+    est_gain_trimmed = est_H[:min_length]
+    decode_gain_trimmed = decode_H[:min_length]
     times = np.arange(min_length)  # Time is just the index
 
     # Plotting
@@ -774,9 +754,9 @@ def plot_decode_H_vs_true_H(est_gain=None, decode_gain=None, session_idx=None, s
 
     # Save or show the plot
     if save_path:
-        save_path = f'{save_path}/h_plots'
+        save_path = f'{save_path}/h_plots/session_{session_idx}'
         os.makedirs(save_path, exist_ok=True)
-        plt.savefig(f"{save_path}/plot.png", dpi=300)
+        plt.savefig(f"{save_path}/h_est_vs_decode.png", dpi=300)
         plt.close()
        
         print(f"Saved plot to {save_path}")

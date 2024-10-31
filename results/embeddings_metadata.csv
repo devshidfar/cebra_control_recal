@@ -10,3 +10,4 @@ session_idx,rat,day,epoch,bin_size,embedding_filename_2d,embedding_filename_3d
 48,913,16,m1,1,bin_size-1_embeddings_2d_rat913_day16_epochm1.npy,bin_size-1_embeddings_3d_rat913_day16_epochm1.npy
 49,913,17,m1,1,bin_size-1_embeddings_2d_rat913_day17_epochm1.npy,bin_size-1_embeddings_3d_rat913_day17_epochm1.npy
 50,913,18,m1,1,bin_size-1_embeddings_2d_rat913_day18_epochm1.npy,bin_size-1_embeddings_3d_rat913_day18_epochm1.npy
+51,913,19,m1,1,bin_size-1_embeddings_2d_rat913_day19_epochm1.npy,bin_size-1_embeddings_3d_rat913_day19_epochm1.npy

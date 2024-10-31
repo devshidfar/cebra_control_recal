@@ -17,6 +17,7 @@ import spud_code.shared_scripts.fit_helper_fns_custom as fhf
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import KernelDensity
 from sklearn_extra.cluster import KMedoids
+from functools import partial
 
 class PiecewiseLinearFit:
     '''Fits a piecewise linear curve to passed data. The curve runs through
@@ -106,7 +107,7 @@ class PiecewiseLinearFit:
     
     def compute_curvature(self, loop_knots):
         segments = loop_knots[1:] - loop_knots[:-1]  # Shape: (n_knots, n_dims)
-        directions = segments / np.linalg.norm(segments, axis=1)[:, np.newaxis]  # Normalize
+        directions = segments / (np.linalg.norm(segments, axis=1)[:, np.newaxis]+1e-7) # Normalize
         delta_directions = directions[1:] - directions[:-1]  # Changes in direction
         curvature = np.sum(np.linalg.norm(delta_directions, axis=1)**2)  # Sum of squared changes
         return curvature
@@ -122,10 +123,13 @@ class PiecewiseLinearFit:
         '''Main function to fit the data. Starting from the initial knots
         move them to minimize the distance of points to the curve, along with
         some (optional) penalty.'''
+        print("fit_params in fit_data:", fit_params)
 
         save_dict = {'fit_params': fit_params}
 
-        def cost_fn(flat_knots, penalty_params=fit_params):
+        def cost_fn(flat_knots, fit_params):
+
+            #print(f"fit params inside cost_fn: {fit_params}")
             # Reshape flat_knots to (nKnots, nDims)
             knots = np.reshape(flat_knots.copy(), (self.nKnots, self.nDims))
             
@@ -147,7 +151,7 @@ class PiecewiseLinearFit:
             
             # Compute weighted distances using Huber loss
             weighted_dists = dists.flatten() * weights[inds.flatten()]
-            delta = penalty_params.get('delta', 1.0)  # Adjust delta as needed
+            delta = fit_params.get('delta', 0.1)  # Adjust delta as needed
             
             # Huber loss computation
             huber_loss = np.where(
@@ -158,37 +162,48 @@ class PiecewiseLinearFit:
             
             # Base cost: sum of Huber losses
             cost = np.sum(huber_loss)
+
+            #print(f"PENALTY PARAMS: {fit_params['penalty_type']}")
             
             # Apply penalties based on penalty_type
-            if penalty_params['penalty_type'] == 'none':
+            if fit_params['penalty_type'] == 'none':
                 return cost
-            elif penalty_params['penalty_type'] == 'mult_len':
+            elif fit_params['penalty_type'] == 'mult_len':
                 cost *= self.tot_len(loop_knots)
-                return
-            elif penalty_params['penalty_type'] == 'add_len':
-                cost += penalty_params['len_coeff'] * self.tot_len(loop_knots)
                 return cost
-            elif penalty_params['penalty_type'] == 'curvature':
-                curvature_penalty = penalty_params['curvature_coeff'] * self.compute_curvature(loop_knots) / self.nKnots
-                length_penalty = penalty_params['len_coeff'] * self.tot_len(loop_knots) / self.nKnots
+            elif fit_params['penalty_type'] == 'add_len':
+                cost += fit_params['len_coeff'] * self.tot_len(loop_knots)
+                return cost
+            elif fit_params['penalty_type'] == 'curvature':
+                curvature_penalty = fit_params['curvature_coeff'] * self.compute_curvature(loop_knots) / self.nKnots
+                print(f"curvature penalty is: {curvature_penalty}")
+                length_penalty = fit_params['len_coeff'] * self.tot_len(loop_knots) / self.nKnots
+                print(f"length penalty is: {curvature_penalty}")
                 # Density penalty
                 log_density_knots = kde.score_samples(knots)
-                density_penalty = penalty_params['density_coeff'] * np.sum(-log_density_knots) / self.nKnots
+                print(f"log density of knots: {log_density_knots}")
+                density_penalty = fit_params['density_coeff'] * np.sum(-log_density_knots) / self.nKnots
+                print(f"density penalty is: {density_penalty}")
                 # Regularization to keep knots near data clusters
-                neighbgraph_knots = NearestNeighbors(n_neighbors=1).fit(self.data_to_fit)
-                knot_dists, _ = neighbgraph_knots.kneighbors(knots)
-                regularization = penalty_params.get('knot_reg_coeff', 1.0) * np.sum(knot_dists) / self.nKnots
+                # neighbgraph_knots = NearestNeighbors(n_neighbors=1).fit(self.data_to_fit)
+                # knot_dists, _ = neighbgraph_knots.kneighbors(knots)
+                # regularization = fit_params.get('knot_reg_coeff', 1.0) * np.sum(knot_dists) / self.nKnots
                 # Total cost with penalties
-                cost += curvature_penalty + length_penalty + density_penalty + regularization
+                cost += curvature_penalty + length_penalty + density_penalty
                 return cost
             else:
-                raise ValueError(f"Unknown penalty type: {penalty_params['penalty_type']}")
+                raise ValueError(f"Unknown penalty type: {fit_params['penalty_type']}")
 
         init_knots = fit_params['init_knots']
+        print("init_knots shape:", init_knots.shape)
+
         flat_init_knots = init_knots.flatten()
+        print("flat_init_knots size:", flat_init_knots.size)
+
+        bound_cost_fn = partial(cost_fn, fit_params=fit_params)
 
         fit_result = minimize(
-            cost_fn,
+            bound_cost_fn,
             flat_init_knots,
             method='Nelder-Mead',
             options={'maxiter': 1000},
