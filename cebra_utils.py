@@ -1,28 +1,53 @@
-import sys
-import os
 import cebra
 sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/spud_code/shared_scripts")
 import manifold_fit_and_decode_fns_custom as mff
 import fit_helper_fns_custom as fhf
 import numpy as np
 import scipy.io
-import cebra
 from scipy import stats
 import matplotlib.pyplot as plt
-import sys
 from mpl_toolkits.mplot3d import Axes3D
 from matplotlib.animation import FuncAnimation
 import seaborn as sns; sns.set()
 import timeit
-from scipy.interpolate import splprep, splev
-from scipy.spatial import distance_matrix
+from scipy.interpolate import splprep, splev, interp1d
+from scipy.spatial import distance_matrix, KDTree
 from sklearn.neighbors import LocalOutlierFactor
-from scipy.spatial import KDTree
-from scipy.interpolate import interp1d
 from ripser import ripser
 from persim import plot_diagrams
 import umap.umap_ as umap
 from sklearn.manifold import TSNE
+from sklearn.metrics import pairwise_distances
+import matplotlib.gridspec as gridspec
+import pandas as pd
+from sklearn.neighbors import NearestNeighbors
+
+def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, actual_angles=None):
+    """
+    Calculate the average difference between the predicted hippocampal angles
+    decoded from the spline and the actual hippocampal angles.
+
+    Parameters:
+    - embeddings (np.ndarray): Embedding points (num_samples, embedding_dimension).
+    - principal_curve (np.ndarray): Principal curve (spline) fitted to the embeddings.
+    - tt (np.ndarray): Parameterization along the principal curve.
+    - actual_angles (np.ndarray): Actual hippocampal angles corresponding to embeddings.
+
+    Returns:
+    - avg_diff (float): Average absolute angular difference between decoded and actual angles.
+    """
+
+    # Decode angles from embeddings using the spline
+    decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], principal_curve[:-1], actual_angles)
+
+    angle_diff = abs(decoded_angles - actual_angles)
+
+    # # Calculate average angular difference
+    # avg_diff = calculate_average_angle_difference(decoded_angles, actual_angles)
+
+    return angle_diff, decoded_angles, mse
+
+
 
 def run_persistent_homology(embeddings, session_idx, session, results_save_path, dimension):
     """
@@ -134,7 +159,28 @@ def run_persistent_homology(embeddings, session_idx, session, results_save_path,
     else:
         print("Polar coordinates not computed.")
 
+# def nt_TDA(data): #taken from Sebastien et al.
 
+#     # Compute pairwise distances between points in the data
+#     D = pairwise_distances(data)
+#     print("Pairwise distances matrix:\n", D)  # Print the distance matrix
+    
+#     # Set the diagonal of the distance matrix to NaN to ignore self-distances
+#     np.fill_diagonal(D, np.nan)
+#     print("Distance matrix with NaN on diagonal:\n", D)  # Print modified distance matrix
+    
+#     # Calculate number of neighbors within the 5th percentile distance for each point
+#     nn_dist = np.sum(D < np.nanpercentile(D, 5), axis=1)
+#     print("Number of neighbors within 5th percentile:\n", nn_dist)  # Print neighbor count per point
+    
+#     # Identify noisy points where neighbor count is below the 20th percentile
+#     noiseIdx = nn_dist < np.percentile(nn_dist, 20)
+#     print("Noise index (True indicates noisy point):\n", noiseIdx)  # Print noise index array
+    
+#     # Print the sum of noisy points
+#     print("Total number of noisy points:", sum(noiseIdx))  # Print count of noisy points
+    
+#     return noiseIdx
 
 
 def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
@@ -172,7 +218,6 @@ def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
     print(f"Outliers based on neighbor counts (count={len(outlier_indices)}): {outlier_indices}\n")
     
     # consider points as outliers if they are too far from any other points
-    from sklearn.neighbors import NearestNeighbors
     neighbgraph = NearestNeighbors(n_neighbors=5).fit(distances)
     dists, inds = neighbgraph.kneighbors(distances)
     min_distance_to_any_point = np.mean(dists, axis=1)
@@ -274,15 +319,13 @@ def plot_initial_knots(data_points, init_knots, session_idx, session, save_path=
         plt.show()
 
 
-def fit_spud_to_cebra(embeddings, ref_angles=None,hippocampal_angle_origin=None,session_idx=None, 
-                       session=None, results_save_path=None,fit_params=None,dimension_3d=None):
+def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
+                       session=None, results_save_path=None,fit_params=None,dimension_3d=None,verbose=False):
 #     # Set up the fit parameters, taken base from Chaudhuri et al.
 
-    print(f"dense points: {embeddings}")
     # Create fitter object
     fitter = mff.PiecewiseLinearFit(embeddings, fit_params)
     # Get initial knots
-    print("made it here")
     unord_knots = fitter.get_new_initial_knots(method = 'kmedoids')
    
     init_knots = fitter.order_knots(unord_knots, method=fit_params['knot_order'])
@@ -305,7 +348,7 @@ def fit_spud_to_cebra(embeddings, ref_angles=None,hippocampal_angle_origin=None,
     # Fit the data
     curr_fit_params = {'init_knots': init_knots, **fit_params}
     print(f"curr_fit_params: {curr_fit_params}")
-    fitter.fit_data(curr_fit_params)
+    fitter.fit_data(curr_fit_params,verbose=verbose)
 
     # Get the final knots
     final_knots = fitter.saved_knots[0]['knots']
@@ -329,21 +372,21 @@ def fit_spud_to_cebra(embeddings, ref_angles=None,hippocampal_angle_origin=None,
     print(f"The largest distance between consecutive knots is {max_dist}, "
           f"between knot {max_dist_idx} and knot {max_dist_idx + 1}")
 
-    # knot1 = final_knots[idx1]
-    # knot2 = final_knots[idx2]
-    # print(f"Knot {max_dist_idx}: {knot1}")
-    # print(f"Knot {max_dist_idx + 1}: {knot2}")
+    knot1 = final_knots[idx1]
+    knot2 = final_knots[idx2]
+    print(f"Knot {max_dist_idx}: {knot1}")
+    print(f"Knot {max_dist_idx + 1}: {knot2}")
 
     
-    # if max_dist > 1.5*np.median(knot_dists):
-    #     print(f"Removing outlier knot at index {max_dist_idx} with distance {max_dist}")
-    #     # Remove the knot
-    #     final_knots = np.delete(final_knots, max_dist_idx, axis=0)
-    # else:
-    #     print("No outlier knot found; proceeding without removing any knots.")
+    if max_dist > 1.5*np.median(knot_dists):
+        print(f"Removing outlier knot at index {max_dist_idx} with distance {max_dist}")
+        # Remove the knot
+        final_knots = np.delete(final_knots, idx2, axis=0)
+    else:
+        print("No outlier knot found; proceeding without removing any knots.")
 
-    # # Adjust the number of knots
-    # nKnots = final_knots.shape[0]
+    # Adjust the number of knots
+    nKnots = final_knots.shape[0]
 
     # construct the spline
     loop_final_knots = fhf.loop_knots(final_knots)
@@ -352,37 +395,33 @@ def fit_spud_to_cebra(embeddings, ref_angles=None,hippocampal_angle_origin=None,
     _, curve_pre = fhf.get_curve_from_knots(loop_final_knots_pre, 'eq_vel')
 
     print(f"form of tt in fit_spud_to_cebra: {np.max(tt)-np.min(tt)}")
-    print(f"form of hippangle in fit_spud_to_cebra: {np.max(ref_angles)-np.min(ref_angles)}")
+    print(f"form of hippangle in fit_spud_to_cebra: {np.max(ref_angle)-np.min(ref_angle)}")
 
-    if ref_angles is not None and hippocampal_angle_origin is not None:
+    if ref_angle is not None:
         # Find the index of the closest hippocampal angle to the desired origin
-        origin_idx = np.argmin(np.abs(ref_angles - hippocampal_angle_origin))
+        #origin_idx = np.argmin(np.abs(ref_angle - hippocampal_angle_origin))
 
         tt = tt * 2*(np.pi)
 
         # Shift the tt values so that the origin is aligned with tt = 0
-        tt_shifted = np.mod(tt - tt[origin_idx], 2 * np.pi)  # Keep tt in the [0, 2*pi] range
+        print(f"ref_angle: {ref_angle}")
+        tt_shifted = tt
+        # tt_shifted = (tt + ref_angle) % (2*np.pi) # Keep tt in the [0, 2*pi] range
+        print(f"first 10 tts: {tt[:10]}")
+        print(f"first 10 tt shifteds: {tt_shifted[:10]}")
+        print(f"First 100 tts: {tt[:100]}")
 
-        tt_diff = np.diff(tt_shifted)
-        angle_diff = np.diff(ref_angles)
+        # tt_diff = np.diff(tt_shifted)
 
-        # Check if the signs of the slopes match, if not, reverse the tt and curve
-        if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
-            print("Reversing spline direction to align with hippocampal angles")
-            tt_shifted = np.flip(tt_shifted)
-            curve = np.flip(curve, axis=0)
-            curve_pre = np.flip(curve_pre, axis=0)
+        # # Check if the signs of the slopes match, if not, reverse the tt and curve
+        # if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
+        #     print("Reversing spline direction to align with hippocampal angles")
+        #     tt_shifted = np.flip(tt_shifted)
+        #     curve = np.flip(curve, axis=0)
+        #     curve_pre = np.flip(curve_pre, axis=0)
         
-        # Reparametrize the spline so that the new tt is aligned with hippocampal_angle_origin
-        print(f"Reparametrized spline with origin at hippocampal angle: {hippocampal_angle_origin} (index {origin_idx})")
         
         tt = tt_shifted
-
-    if ref_angles is not None:
-        # Use the `decode_from_spline_fit` function (similar to `decode_from_passed_fit`)
-        decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], curve[:-1], ref_angles)
-        print(f"Decoded circular MSE: {mse}")
-        return curve, curve_pre, tt, decoded_angles, mse
     
     return curve, curve_pre, tt
 
@@ -419,7 +458,7 @@ def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=Non
     plt.show()
     
 
-def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10,mean_dist=None):
+def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10,mean_dist=None,avg_angle_diff=None,shuffled_avg_angle_diff=None):
     """
     Plots a 3D rotating plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline.
@@ -476,7 +515,7 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
         # Position: (x, y) in figure coordinates [0,1]
         fig.text(
             0.05, 0.95,
-            f'Mean Distance from spline: {mean_dist:.2f}',
+            f'Mean Distance from spline: {mean_dist:.2f}, Avg angle diff: {avg_angle_diff:.2f}, Shufled avg angle diff: {shuffled_avg_angle_diff:.2f}',
             fontsize=12,
             verticalalignment='top',
             bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=5)
@@ -503,8 +542,46 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
 
     return anim
 
-def apply_cebra(neural_data,output_dimensions,max_iterations=None,batch_size=None,temperature=1):
-    model = cebra.CEBRA(output_dimension=output_dimensions, max_iterations=1000, batch_size=128,temperature=2)
+# def apply_cebra(neural_data=None,model_architecture='offset10-model',
+#                         batch_size=512,
+#                         learning_rate=3e-4,
+#                         temperature_mode = 'constant',
+#                         temperature=1,
+#                         min_temperature = 1e-1,
+#                         output_dimension=3,
+#                         max_iterations=5000,
+#                         distance='cosine',
+#                         device='cuda_if_available',
+#                         verbose=True):
+    
+#     model = cebra.CEBRA(model_architecture=model_architecture,
+#                         batch_size=batch_size,
+#                         learning_rate=learning_rate,
+#                         temperature_mode = temperature_mode,
+#                         temperature=temperature,
+#                         min_temperature = min_temperature,
+#                         output_dimension=output_dimension,
+#                         max_iterations=max_iterations,
+#                         distance=distance,
+#                         device=device,
+#                         verbose=verbose)
+def apply_cebra(neural_data=None,output_dimension=3):
+
+    ''' default hyper-params for CEBRA model
+
+    # Model Architecture (model_architecture): 'offset10-model'
+    # Batch Size (batch_size): 512
+    # Temperature Mode (temperature_mode): "auto"
+    # Learning Rate (learning_rate): 0.001
+    # Max Iterations (max_iterations): 10,000
+    # Time Offsets (time_offsets): 10
+    # Output Dimension (output_dimension): 8
+    # Device (device): "cuda_if_available" (falls back to "cpu" if no GPU is available)
+    # Verbose (verbose): False
+
+    '''
+     
+    model = cebra.CEBRA(output_dimension=output_dimension, max_iterations=1000, batch_size = 512)   
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
     return embeddings
@@ -610,7 +687,7 @@ def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, 
     fig, axes = plt.subplots(1, 3, figsize=(24, 8))
 
     # CEBRA 2D Embedding
-    sc1 = axes[0].scatter(embeddings_2d[:,0], embeddings_2d[:,1], c=hipp_angle_binned % 360, cmap='viridis', s=10)
+    sc1 = axes[0].scatter(embeddings_2d[:,0], embeddings_2d[:,1], c=hipp_angle_binned, cmap='viridis', s=10)
     axes[0].plot(principal_curve_2d[:,0], principal_curve_2d[:,1], color='red', linewidth=2)
     axes[0].set_title('CEBRA 2D Embedding')
     axes[0].set_xlabel('Dimension 1')
@@ -618,7 +695,7 @@ def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, 
     plt.colorbar(sc1, ax=axes[0], label='Hipp Angle (°)')
 
     # CEBRA 3D Embedding projected to 2D
-    sc2 = axes[1].scatter(embeddings_3d[:,0], embeddings_3d[:,1], c=true_angle_binned % 360, cmap='plasma', s=10)
+    sc2 = axes[1].scatter(embeddings_3d[:,0], embeddings_3d[:,1], c=true_angle_binned, cmap='plasma', s=10)
     axes[1].plot(principal_curve_3d[:,0], principal_curve_3d[:,1], color='red', linewidth=2)
     axes[1].set_title('CEBRA 3D Embedding (Projected to 2D)')
     axes[1].set_xlabel('Dimension 1')
@@ -626,7 +703,7 @@ def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, 
     plt.colorbar(sc2, ax=axes[1], label='True Angle (°)')
 
     # UMAP 2D Embedding
-    sc3 = axes[2].scatter(umap_embeddings[:,0], umap_embeddings[:,1], c=true_angle_binned % 360, cmap='inferno', s=10)
+    sc3 = axes[2].scatter(umap_embeddings[:,0], umap_embeddings[:,1], c=true_angle_binned, cmap='inferno', s=10)
     axes[2].set_title('UMAP 2D Embedding')
     axes[2].set_xlabel('UMAP Dimension 1')
     axes[2].set_ylabel('UMAP Dimension 2')
@@ -669,7 +746,7 @@ def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,
 
     # Plot t-SNE embeddings
     plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], s=10, c=(hipp_angle_binned % 360), cmap='viridis')
+    scatter = plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], s=10, c=hipp_angle_binned, cmap='viridis')
     plt.title('t-SNE Visualization')
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')
@@ -681,36 +758,148 @@ def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,
     return
 
 
-def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None):
+# def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None):
+#     """
+#     Calculate the hippocampal gain (H) between two time points t0 and t1.
     
-    # Extract embeddings at t0 and t1
-    embedding_t0 = embeddings[t0].reshape(1, -1)  # Reshape to (1, n) for knn
-    embedding_t1 = embeddings[t1].reshape(1, -1)
+#     Parameters:
+#     - principal_curve: Array representing the principal manifold.
+#     - tt: Array of temporal or spatial indices corresponding to the principal_curve.
+#     - embeddings: Array of embedding vectors for each time point.
+#     - t0: Starting time index.
+#     - t1: Ending time index.
+#     - true_angle: Array of true angles corresponding to each time point.
+    
+#     Returns:
+#     - H: Calculated hippocampal gain between t0 and t1.
+#     """
+    
+#     # Extract embeddings at t0 and t1
+#     embedding_t0 = embeddings[t0].reshape(1, -1)  # Reshape to (1, n) for knn
+#     embedding_t1 = embeddings[t1].reshape(1, -1)
 
-    # Use get_closest_manifold_coords to find nearest manifold points
-    input_coords_0,dists_from_mani_0,tt_index0 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t0, return_all = True)
-    input_coords_0,dists_from_mani_0,tt_index1 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t1, return_all = True)
-    #now find euclidean nearest point to spline from each embedding point
+#     # Use get_closest_manifold_coords to find nearest manifold points
+#     input_coords_0,dists_from_mani_0,tt_index0 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t0, return_all = True)
+#     input_coords_0,dists_from_mani_0,tt_index1 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t1, return_all = True)
+#     #now find euclidean nearest point to spline from each embedding point
 
-    #will get tt_index1,tt_index0
+#     #will get tt_index1,tt_index0
+#     true_angle_diff = true_angle[t1] - true_angle[t0]
+#     if true_angle_diff == 0:
+#         print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding 1e-9")
+#         H = (tt[tt_index1] - tt[tt_index0])/(true_angle_diff+1e-9)
+#     else:
+#         H = (tt[tt_index1] - tt[tt_index0])/(true_angle_diff)
 
-    H = (tt[tt_index1] - tt[tt_index0])/(true_angle[t1]-true_angle[t0])
+#     return H
+
+def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
+    """
+    Calculate the hippocampal gain (H) between two time points t0 and t1
+    by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
+    of the embeddings at t0 and t1.
+    
+    Parameters:
+    - principal_curve (np.ndarray): Array representing the principal manifold.
+    - tt (np.ndarray): Array of parameterization along the principal curve.
+    - embeddings (np.ndarray): Array of embedding vectors for each time point.
+    - t0 (int): Starting time index.
+    - t1 (int): Ending time index.
+    - true_angle (np.ndarray): Array of true angles corresponding to each time point.
+    - n_neighbors (int): Number of closest neighbors to consider (default=5).
+    
+    Returns:
+    - H (float): Calculated hippocampal gain between t0 and t1.
+    """
+    
+    # Ensure t0 and t1 are within the valid range
+    if t0 >= len(embeddings) or t1 >= len(embeddings):
+        raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
+    
+    # Fit Nearest Neighbors model on embeddings
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
+    
+    # Function to compute average tt value for a given embedding index
+    def get_avg_tt(embedding_index):
+        # Get the embedding at the specified index
+        embedding_point = embeddings[embedding_index].reshape(1, -1)
+        # Find the n_neighbors+1 closest embeddings (including itself)
+        distances, indices = nbrs.kneighbors(embedding_point)
+        # Exclude the embedding itself (assuming it's the first one)
+        neighbor_indices = indices[0][1:]
+        tt_values = []
+        for idx in neighbor_indices:
+            # Get the embedding of the neighbor
+            embedding_neighbor = embeddings[idx].reshape(1, -1)
+            # Find the closest manifold coordinate for the neighbor
+            _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
+            tt_value = tt[tt_index]
+            tt_values.append(tt_value)
+        # Calculate the mean of the tt values
+        print(f"IN CALCULATE H, the tt values: {tt_values}")
+        return np.mean(tt_values)
+    
+    # Get average tt values for t0 and t1
+    avg_tt_t0 = get_avg_tt(t0)
+    avg_tt_t1 = get_avg_tt(t1)
+    
+    # Compute the difference in true angles
+    true_angle_diff = true_angle[t1] - true_angle[t0]
+    if true_angle_diff == 0:
+        print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
+        true_angle_diff += 1e-9  # Add a small value to avoid division by zero
+
+    print(f"true_angle t0 : {true_angle[t0]}")
+    print(f"true_angle t1 : {true_angle[t1]}")
+    print(f"true_angle_diff is: {true_angle_diff}")
+    print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
+
+    print(f"avg_tt_t0 is: {avg_tt_t0}")
+    print(f"avg_tt_t1 is: {avg_tt_t1}")
+    print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
+    print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
+
+
+    print(f"H value between {t0} and {t1}")
+    
+    # Calculate the hippocampal gain H
+    H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
 
     return H
 
 
-def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None):
+
+def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None,num_avg_over=2, spacing=0, n_neighbors=5):
+
+    """
+    Calculate the hippocampal gain (H) over an entire experiment by averaging over specified time steps.
     
-    num_avg_over = 4
-    spacing = 2
+    Parameters:
+    - principal_curve: Array representing the principal manifold.
+    - tt: Array of temporal or spatial indices corresponding to the principal_curve.
+    - embeddings: Array of embedding vectors for each time point.
+    - true_angle: Array of true angles corresponding to each time point.
+    - num_avg_over: Number of time steps to average over (default=3).
+    - spacing: Spacing between time points to consider for averaging (default=2).
+    
+    Returns:
+    - H_array: Array of averaged hippocampal gain values across the experiment.
+    """
+    
     H_list = []
-    for i in range(((len(embeddings)-1)-num_avg_over)//spacing):
+    embeddings_length = len(embeddings)
+
+    for i in range(((len(embeddings)-1)-spacing)):
 
         H_temp_list = []
-        t0 = i + spacing
+        t0 = i
         for j in range(num_avg_over):
             t1 = i + j + spacing
-            H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle)
+            if t1 >= embeddings_length:
+                raise IndexError(
+                    f"Index t1={t1} out of bounds for embeddings of length {embeddings_length}."
+                )
+            H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle,n_neighbors=n_neighbors)
             H_temp_list.append(H_temp)
 
         H_temp = np.mean(H_temp_list)
@@ -718,17 +907,22 @@ def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,t
     
     return np.array(H_list)
 
-def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session=None, save_path=None):
+def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session=None, save_path=None, tag=None):
     """
-    Plots est_gain and decode_gain using array indices as time points.
-
+    Plots estimated hippocampal gain (est_H) against decoded gain (decode_H), optionally applying a moving average.
+    
     Parameters:
-    - est_gain (np.ndarray): Array of estimated gain values.
-    - decode_gain (np.ndarray): Array of decoded gain values.
+    - est_H (np.ndarray): Array of estimated gain values.
+    - decode_H (np.ndarray): Array of decoded gain values.
     - session_idx (int, optional): Session index for labeling purposes.
     - session (object, optional): Session object containing metadata.
     - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
+    - window_size (int, optional): Number of time steps to average over for smoothing (default=None).
+    
+    Returns:
+    - None
     """
+
     # Find the overlapping range of indices
     min_length = min(len(est_H), len(decode_H))
 
@@ -737,16 +931,30 @@ def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session
     decode_gain_trimmed = decode_H[:min_length]
     times = np.arange(min_length)  # Time is just the index
 
+    avg_est_gain = np.mean(est_gain_trimmed)
+    avg_decode_gain = np.mean(decode_gain_trimmed)
+
     # Plotting
     plt.figure(figsize=(12, 6))
     plt.plot(times, est_gain_trimmed, label='Estimated Gain', color='blue')
     plt.plot(times, decode_gain_trimmed, label='Decoded Gain', color='red', alpha=0.7)
 
+    # Create an axes instance
+    ax = plt.gca()
+    
+    avg_text = f'Avg Estimated Gain: {avg_est_gain:.2f}\nAvg Decoded Gain: {avg_decode_gain:.2f}'
+    
+    # Add text annotation in the top-left corner
+    ax.text(0.05, 0.95, avg_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5))
+    
+    
+
     plt.xlabel('Time (s)', fontsize=14)
     plt.ylabel('Gain', fontsize=14)
     title = 'FT gain vs spline decoded Gain'
     if session_idx is not None and session is not None:
-        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}, Tag {tag}'
     plt.title(title, fontsize=16)
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.5)
@@ -756,10 +964,124 @@ def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session
     if save_path:
         save_path = f'{save_path}/h_plots/session_{session_idx}'
         os.makedirs(save_path, exist_ok=True)
-        plt.savefig(f"{save_path}/h_est_vs_decode.png", dpi=300)
+        plt.savefig(f"{save_path}/h_est_vs_decode_{tag}.png", dpi=300)
         plt.close()
        
         print(f"Saved plot to {save_path}")
+    else:
+        plt.show()
+
+def plot_decode_H_moving_avg(est_H=None, decode_H=None, session_idx=None, session=None, 
+                             save_path=None, tag=None, window_size=5):
+    """
+    Plots the moving averages of estimated hippocampal gain (est_H) against decoded gain (decode_H).
+    
+    Parameters:
+    - est_H (np.ndarray): Array of estimated gain values.
+    - decode_H (np.ndarray): Array of decoded gain values.
+    - session_idx (int, optional): Session index for labeling purposes.
+    - session (object, optional): Session object containing metadata. Expected to have attributes 'rat', 'day', and 'epoch'.
+    - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
+    - tag (str, optional): Additional tag for the plot title and filename.
+    - window_size (int, optional): Number of time steps to average over for smoothing (default=5).
+    
+    Returns:
+    - None
+    """
+    
+    # Validate input arrays
+    if est_H is None or decode_H is None:
+        raise ValueError("Both est_H and decode_H must be provided.")
+    
+    # Validate window_size
+    if not isinstance(window_size, int) or window_size <= 0:
+        raise ValueError("window_size must be a positive integer.")
+    
+    # Find the overlapping range of indices
+    min_length = min(len(est_H), len(decode_H))
+    
+    # Trim est_H and decode_H to the overlapping range
+    est_gain_trimmed = est_H[:min_length]
+    decode_gain_trimmed = decode_H[:min_length]
+    times = np.arange(min_length)  # Time is just the index
+    
+    # Optional: Handle NaNs and Infs if necessary
+    # Uncomment and adjust the following lines if your data contains NaNs or Infs
+    # valid_indices = ~np.isnan(est_gain_trimmed) & ~np.isnan(decode_gain_trimmed) & \
+    #                 ~np.isinf(est_gain_trimmed) & ~np.isinf(decode_gain_trimmed)
+    # est_gain_trimmed = est_gain_trimmed[valid_indices]
+    # decode_gain_trimmed = decode_gain_trimmed[valid_indices]
+    # times = times[valid_indices]
+    
+    # Check if the trimmed arrays are long enough for the moving average
+    if min_length < window_size:
+        raise ValueError(f"Not enough data points ({min_length}) for the specified window_size ({window_size}).")
+    
+    # Compute moving averages using numpy's convolution
+    kernel = np.ones(window_size) / window_size
+    avg_est_gain = np.convolve(est_gain_trimmed, kernel, mode='valid')
+    avg_decode_gain = np.convolve(decode_gain_trimmed, kernel, mode='valid')
+    
+    # Adjust the time axis for 'valid' mode convolution
+    # This centers the window; alternatively, you can adjust as needed
+    adjusted_times = times[(window_size - 1)//2 : -(window_size//2)] if window_size > 1 else times
+    
+    # Calculate the overall averages of the moving averages
+    overall_avg_est_gain = np.mean(avg_est_gain)
+    overall_avg_decode_gain = np.mean(avg_decode_gain)
+    
+    # Plotting
+    plt.figure(figsize=(12, 6))
+    plt.plot(adjusted_times, avg_est_gain, label=f'Estimated Gain (MA window={window_size})', color='blue')
+    plt.plot(adjusted_times, avg_decode_gain, label=f'Decoded Gain (MA window={window_size})', color='red', alpha=0.7)
+    
+    # Create an axes instance for annotations
+    ax = plt.gca()
+    
+    # Prepare the text for average values
+    avg_text = f'Overall Avg Estimated Gain: {overall_avg_est_gain:.2f}\n' \
+               f'Overall Avg Decoded Gain: {overall_avg_decode_gain:.2f}'
+    
+    # Add text annotation in the top-left corner
+    ax.text(0.05, 0.95, avg_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5))
+    
+    # Setting labels and title
+    plt.xlabel('Time (s)', fontsize=14)
+    plt.ylabel('Gain', fontsize=14)
+    title = 'FT Gain vs Spline Decoded Gain (Moving Averages)'
+    
+    # Adding session information to the title if available
+    if session_idx is not None and session is not None:
+        # Ensure that session has attributes 'rat', 'day', and 'epoch'
+        rat = getattr(session, 'rat', 'Unknown Rat')
+        day = getattr(session, 'day', 'Unknown Day')
+        epoch = getattr(session, 'epoch', 'Unknown Epoch')
+        title += f'\nSession {session_idx}: Rat {rat}, Day {day}, Epoch {epoch}'
+    
+    # Include the tag in the title if provided
+    if tag is not None:
+        title += f', Tag: {tag}'
+    
+    plt.title(title, fontsize=16)
+    plt.legend()
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.tight_layout()
+    
+    # Save or show the plot
+    if save_path:
+        # Define the directory structure
+        save_dir = os.path.join(save_path, 'h_plots', f'session_{session_idx}')
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Define the filename with tag if provided
+        filename = f"h_est_vs_decode_ma_window{window_size}_{tag}.png" if tag else f"h_est_vs_decode_ma_window{window_size}.png"
+        full_save_path = os.path.join(save_dir, filename)
+        
+        # Save the figure
+        plt.savefig(full_save_path, dpi=300)
+        plt.close()  # Close the figure to free memory
+        print(f"Saved plot to {full_save_path}")
     else:
         plt.show()
 

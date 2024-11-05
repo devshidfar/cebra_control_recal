@@ -119,7 +119,7 @@ class PiecewiseLinearFit:
                 delta * (dists - 0.5 * delta)
     )
 
-    def fit_data(self, fit_params):
+    def fit_data(self, fit_params, verbose=False):
         '''Main function to fit the data. Starting from the initial knots
         move them to minimize the distance of points to the curve, along with
         some (optional) penalty.'''
@@ -127,7 +127,7 @@ class PiecewiseLinearFit:
 
         save_dict = {'fit_params': fit_params}
 
-        def cost_fn(flat_knots, fit_params):
+        def cost_fn(flat_knots, fit_params,verbose=False):
 
             #print(f"fit params inside cost_fn: {fit_params}")
             # Reshape flat_knots to (nKnots, nDims)
@@ -142,6 +142,12 @@ class PiecewiseLinearFit:
             # Find nearest neighbors from data to the fit curve
             neighbgraph = NearestNeighbors(n_neighbors=1).fit(fit_curve)
             dists, inds = neighbgraph.kneighbors(self.data_to_fit)
+
+            mean_dists = np.mean(dists)
+            threshold = 1.5 * mean_dists
+            filtered_dists = dists[dists < threshold]
+            inds = inds[dists < threshold]
+
             
             # Compute data density using Kernel Density Estimation
             kde = KernelDensity(kernel='gaussian', bandwidth=2.0).fit(self.data_to_fit)
@@ -150,7 +156,7 @@ class PiecewiseLinearFit:
             weights = density_data / np.sum(density_data)
             
             # Compute weighted distances using Huber loss
-            weighted_dists = dists.flatten() * weights[inds.flatten()]
+            weighted_dists = filtered_dists.flatten() * weights[inds.flatten()]
             delta = fit_params.get('delta', 0.1)  # Adjust delta as needed
             
             # Huber loss computation
@@ -160,8 +166,12 @@ class PiecewiseLinearFit:
                 delta * (weighted_dists - 0.5 * delta)
             )
             
+
+
             # Base cost: sum of Huber losses
             cost = np.sum(huber_loss)
+            if(verbose):
+                print(f"dist penalty: {cost}")
 
             #print(f"PENALTY PARAMS: {fit_params['penalty_type']}")
             
@@ -175,15 +185,19 @@ class PiecewiseLinearFit:
                 cost += fit_params['len_coeff'] * self.tot_len(loop_knots)
                 return cost
             elif fit_params['penalty_type'] == 'curvature':
-                curvature_penalty = fit_params['curvature_coeff'] * self.compute_curvature(loop_knots) / self.nKnots
-                print(f"curvature penalty is: {curvature_penalty}")
-                length_penalty = fit_params['len_coeff'] * self.tot_len(loop_knots) / self.nKnots
-                print(f"length penalty is: {curvature_penalty}")
+                curvature_penalty = fit_params['curvature_coeff'] * self.compute_curvature(loop_knots)
+                if(verbose):
+                    print(f"curvature penalty is: {curvature_penalty}")
+                length_penalty = fit_params['len_coeff'] * self.tot_len(loop_knots)
+                if(verbose):
+                    print(f"length penalty is: {length_penalty}")
                 # Density penalty
                 log_density_knots = kde.score_samples(knots)
-                print(f"log density of knots: {log_density_knots}")
-                density_penalty = fit_params['density_coeff'] * np.sum(-log_density_knots) / self.nKnots
-                print(f"density penalty is: {density_penalty}")
+                if(verbose):
+                    print(f"log density of knots: {log_density_knots}")
+                density_penalty = fit_params['density_coeff'] * np.sum(-log_density_knots)
+                if(verbose):
+                    print(f"density penalty is: {density_penalty}")
                 # Regularization to keep knots near data clusters
                 # neighbgraph_knots = NearestNeighbors(n_neighbors=1).fit(self.data_to_fit)
                 # knot_dists, _ = neighbgraph_knots.kneighbors(knots)
@@ -195,18 +209,20 @@ class PiecewiseLinearFit:
                 raise ValueError(f"Unknown penalty type: {fit_params['penalty_type']}")
 
         init_knots = fit_params['init_knots']
-        print("init_knots shape:", init_knots.shape)
+        if(verbose):
+            print("init_knots shape:", init_knots.shape)
 
         flat_init_knots = init_knots.flatten()
-        print("flat_init_knots size:", flat_init_knots.size)
+        if(verbose):
+            print("flat_init_knots size:", flat_init_knots.size)
 
-        bound_cost_fn = partial(cost_fn, fit_params=fit_params)
+        bound_cost_fn = partial(cost_fn, fit_params=fit_params,verbose=verbose)
 
         fit_result = minimize(
             bound_cost_fn,
             flat_init_knots,
             method='Nelder-Mead',
-            options={'maxiter': 1000},
+            options={'maxiter': 100},
         )
 
         knots = np.reshape(fit_result.x.copy(), (self.nKnots, self.nDims))
@@ -397,9 +413,8 @@ def decode_from_passed_fit(data_to_decode, fit_coords, fit_curve, ref_angles):
     # aren't identical, though I suspect it won't matter (check this)
     # loop_tt, loop_curve = fit_results['tt'], fit_results['curve']
 
-    # Multiply coords by 2*pi so that we can compare with angles
     unshft_coords = fhf.get_closest_manifold_coords(fit_curve, 
-        2*np.pi*fit_coords, data_to_decode)
+        fit_coords, data_to_decode)
     dec_angle, mse, shift, flip = af.shift_to_match_given_trace(unshft_coords,
         ref_angles)
     return dec_angle, mse
