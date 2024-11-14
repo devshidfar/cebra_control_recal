@@ -44,6 +44,8 @@ import matplotlib.colors as mcolors
 import os
 import plotly.graph_objs as go
 from plotly.offline import plot
+from matplotlib.widgets import Slider
+import mpld3
 
 def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, actual_angles=None):
     """
@@ -776,115 +778,103 @@ def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,
 
     return
 
-
-# def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None):
+# def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
 #     """
-#     Calculate the hippocampal gain (H) between two time points t0 and t1.
+#     Calculate the hippocampal gain (H) between two time points t0 and t1
+#     by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
+#     of the embeddings at t0 and t1.
     
 #     Parameters:
-#     - principal_curve: Array representing the principal manifold.
-#     - tt: Array of temporal or spatial indices corresponding to the principal_curve.
-#     - embeddings: Array of embedding vectors for each time point.
-#     - t0: Starting time index.
-#     - t1: Ending time index.
-#     - true_angle: Array of true angles corresponding to each time point.
+#     - principal_curve (np.ndarray): Array representing the principal manifold.
+#     - tt (np.ndarray): Array of parameterization along the principal curve.
+#     - embeddings (np.ndarray): Array of embedding vectors for each time point.
+#     - t0 (int): Starting time index.
+#     - t1 (int): Ending time index.
+#     - true_angle (np.ndarray): Array of true angles corresponding to each time point.
+#     - n_neighbors (int): Number of closest neighbors to consider (default=5).
     
 #     Returns:
-#     - H: Calculated hippocampal gain between t0 and t1.
+#     - H (float): Calculated hippocampal gain between t0 and t1.
 #     """
     
-#     # Extract embeddings at t0 and t1
-#     embedding_t0 = embeddings[t0].reshape(1, -1)  # Reshape to (1, n) for knn
-#     embedding_t1 = embeddings[t1].reshape(1, -1)
-
-#     # Use get_closest_manifold_coords to find nearest manifold points
-#     input_coords_0,dists_from_mani_0,tt_index0 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t0, return_all = True)
-#     input_coords_0,dists_from_mani_0,tt_index1 = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_t1, return_all = True)
-#     #now find euclidean nearest point to spline from each embedding point
-
-#     #will get tt_index1,tt_index0
+#     # Ensure t0 and t1 are within the valid range
+#     if t0 >= len(embeddings) or t1 >= len(embeddings):
+#         raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
+    
+#     # Fit Nearest Neighbors model on embeddings
+#     nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
+    
+#     # Function to compute average tt value for a given embedding index
+#     def get_avg_tt(embedding_index):
+#         # Get the embedding at the specified index
+#         embedding_point = embeddings[embedding_index].reshape(1, -1)
+#         # Find the n_neighbors+1 closest embeddings (including itself)
+#         distances, indices = nbrs.kneighbors(embedding_point)
+#         # Exclude the embedding itself
+#         neighbor_indices = indices[0][1:]
+#         tt_values = []
+#         for idx in neighbor_indices:
+#             # Get the embedding of the neighbor
+#             embedding_neighbor = embeddings[idx].reshape(1, -1)
+#             # Find the closest manifold coordinate for the neighbor
+#             _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
+#             tt_value = tt[tt_index]
+#             tt_values.append(tt_value)
+#         # Calculate the mean of the tt values
+#         # print(f"IN CALCULATE H, the tt values: {tt_values}")
+#         return np.mean(tt_values)
+    
+#     # Get average tt values for t0 and t1
+#     avg_tt_t0 = get_avg_tt(t0)
+#     avg_tt_t1 = get_avg_tt(t1)
+    
+#     # Compute the difference in true angles
 #     true_angle_diff = true_angle[t1] - true_angle[t0]
 #     if true_angle_diff == 0:
-#         print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding 1e-9")
-#         H = (tt[tt_index1] - tt[tt_index0])/(true_angle_diff+1e-9)
-#     else:
-#         H = (tt[tt_index1] - tt[tt_index0])/(true_angle_diff)
+#         print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
+#         true_angle_diff += 1e-9  # Add a small value to avoid division by zero
+
+#     # print(f"true_angle t0 : {true_angle[t0]}")
+#     # print(f"true_angle t1 : {true_angle[t1]}")
+#     # print(f"true_angle_diff is: {true_angle_diff}")
+#     # print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
+
+#     # print(f"avg_tt_t0 is: {avg_tt_t0}")
+#     # print(f"avg_tt_t1 is: {avg_tt_t1}")
+#     # print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
+#     # print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
+
+
+#     # print(f"H value between {t0} and {t1}")
+    
+#     # Calculate the hippocampal gain H
+#     H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
 
 #     return H
 
-def calculate_single_H(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
-    """
-    Calculate the hippocampal gain (H) between two time points t0 and t1
-    by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
-    of the embeddings at t0 and t1.
-    
-    Parameters:
-    - principal_curve (np.ndarray): Array representing the principal manifold.
-    - tt (np.ndarray): Array of parameterization along the principal curve.
-    - embeddings (np.ndarray): Array of embedding vectors for each time point.
-    - t0 (int): Starting time index.
-    - t1 (int): Ending time index.
-    - true_angle (np.ndarray): Array of true angles corresponding to each time point.
-    - n_neighbors (int): Number of closest neighbors to consider (default=5).
-    
-    Returns:
-    - H (float): Calculated hippocampal gain between t0 and t1.
-    """
-    
-    # Ensure t0 and t1 are within the valid range
-    if t0 >= len(embeddings) or t1 >= len(embeddings):
-        raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
-    
-    # Fit Nearest Neighbors model on embeddings
-    nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
-    
-    # Function to compute average tt value for a given embedding index
-    def get_avg_tt(embedding_index):
-        # Get the embedding at the specified index
-        embedding_point = embeddings[embedding_index].reshape(1, -1)
-        # Find the n_neighbors+1 closest embeddings (including itself)
-        distances, indices = nbrs.kneighbors(embedding_point)
-        # Exclude the embedding itself
-        neighbor_indices = indices[0][1:]
-        tt_values = []
-        for idx in neighbor_indices:
-            # Get the embedding of the neighbor
-            embedding_neighbor = embeddings[idx].reshape(1, -1)
-            # Find the closest manifold coordinate for the neighbor
-            _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
-            tt_value = tt[tt_index]
-            tt_values.append(tt_value)
-        # Calculate the mean of the tt values
-        print(f"IN CALCULATE H, the tt values: {tt_values}")
-        return np.mean(tt_values)
-    
-    # Get average tt values for t0 and t1
-    avg_tt_t0 = get_avg_tt(t0)
-    avg_tt_t1 = get_avg_tt(t1)
-    
-    # Compute the difference in true angles
-    true_angle_diff = true_angle[t1] - true_angle[t0]
-    if true_angle_diff == 0:
-        print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
-        true_angle_diff += 1e-9  # Add a small value to avoid division by zero
+def calculate_single_H_array(decoded_angle_t0=None, decoded_angle_t1=None, true_angle_t0=None, true_angle_t1=None):
 
-    print(f"true_angle t0 : {true_angle[t0]}")
-    print(f"true_angle t1 : {true_angle[t1]}")
-    print(f"true_angle_diff is: {true_angle_diff}")
-    print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
+    true_diff = true_angle_t1-true_angle_t0
+    if true_diff == 0:
+        true_diff = 1e-6
 
-    print(f"avg_tt_t0 is: {avg_tt_t0}")
-    print(f"avg_tt_t1 is: {avg_tt_t1}")
-    print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
-    print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
-
-
-    print(f"H value between {t0} and {t1}")
-    
-    # Calculate the hippocampal gain H
-    H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
+    H = ( ((decoded_angle_t1-decoded_angle_t0) % (2*np.pi))/((true_diff) % (2*np.pi)) )
 
     return H
+
+def calculate_over_experiment_H_array(decoded_angles=None,true_angles=None,spacing=None):
+    print(f"decoded: {len(decoded_angles)}")
+    print(f"true: {len(true_angles)}")
+
+    H_list = []
+    for i in range(len(true_angles)-1-spacing):
+        t0 = i
+        t1 = i + spacing  
+        H_temp = calculate_single_H_array(decoded_angle_t0=decoded_angles[t0], decoded_angle_t1=decoded_angles[t1], true_angle_t0=true_angles[t0], true_angle_t1=true_angles[t1])
+        H_list.append(H_temp)
+
+
+    return np.array(H_list)
 
 
 
@@ -918,7 +908,7 @@ def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,t
                 raise IndexError(
                     f"Index t1={t1} out of bounds for embeddings of length {embeddings_length}."
                 )
-            H_temp = calculate_single_H(principal_curve, tt, embeddings, t0, t1, true_angle,n_neighbors=n_neighbors)
+            H_temp = calculate_single_H_neighbors(principal_curve, tt, embeddings, t0, t1, true_angle,n_neighbors=n_neighbors)
             H_temp_list.append(H_temp)
 
         H_temp = np.mean(H_temp_list)
@@ -1216,7 +1206,7 @@ def plot_Hs_over_laps_moving_average(est_H=None, decode_H=None, lap_number=None,
         plt.show()
 
 def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
-                                  save_path=None, tag=None, SI_score=None, decode_err=None):
+                                  save_path=None, tag=None, SI_score=None, decode_err=None,mean_diff=None,std_diff=None):
     """
     Plots two H values against lap numbers using Plotly for interactivity.
 
@@ -1285,6 +1275,10 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
         annotation_text += f'<br>SI Score: {SI_score:.2f}'
     if decode_err is not None:
         annotation_text += f'<br>Decode Error: {decode_err:.2f}'
+    if mean_diff is not None:
+        annotation_text += f'<br>mean_diff: {mean_diff:.2f}'
+    if std_diff is not None:
+        annotation_text += f'<br>std_diff: {std_diff:.2f}'
 
     # Define the base title text with session information if available
     base_title = 'est_H and decode_H Values Over Laps'
@@ -1776,7 +1770,7 @@ def get_H_over_lap(H=None, true_angle=None):
     
     Returns:
     - lap_number: numpy.ndarray, shape (n,)
-        Array representing the lap index (including fractional laps) for each H value.
+        Array representing the lap index for each H value.
     - sorted_H: numpy.ndarray, shape (n,)
         The H array reordered based on ascending lap_number.
     - sorted_lap_number: numpy.ndarray, shape (n,)
@@ -1785,9 +1779,6 @@ def get_H_over_lap(H=None, true_angle=None):
     Raises:
     - ValueError: If H and true_angle are not provided or have different lengths.
     """
-    # Input validation
-    if H is None or true_angle is None:
-        raise ValueError("Both H and true_angle must be provided.")
     
     H = np.asarray(H)
     true_angle = np.asarray(true_angle)
@@ -1810,6 +1801,69 @@ def get_H_over_lap(H=None, true_angle=None):
     
     return lap_number, sorted_H, sorted_lap_number
 
+
+# def plot_Hs_over_laps_scrollable_with_plotly(est_H=None, decode_H=None, lap_number=None, 
+#                                              session_idx=None, session=None, save_path=None, tag=None, window_size=None):
+#     """
+#     Plots two H values against lap numbers with interactivity using Plotly,
+#     and saves the plot as an HTML file.
+#     """
+
+#     # Input validation
+#     if est_H is None or decode_H is None or lap_number is None:
+#         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
+    
+#     # Ensure inputs are NumPy arrays
+#     est_H = np.asarray(est_H)
+#     decode_H = np.asarray(decode_H)
+#     lap_number = np.asarray(lap_number)
+
+#     # Trimming to the shortest length
+#     min_length = min(len(est_H), len(decode_H), len(lap_number))
+#     est_H = est_H[:min_length]
+#     decode_H = decode_H[:min_length]
+#     lap_number = lap_number[:min_length]
+    
+#     # Create interactive traces
+#     trace_est_H = go.Scatter(
+#         x=lap_number,
+#         y=est_H,
+#         mode='lines+markers',
+#         name='est_H',
+#         line=dict(color='blue'),
+#     )
+#     trace_decode_H = go.Scatter(
+#         x=lap_number,
+#         y=decode_H,
+#         mode='lines+markers',
+#         name='decode_H',
+#         line=dict(color='red'),
+#     )
+
+#     # Create layout
+#     layout = go.Layout(
+#         title="Interactive H Plot with Scrollable Laps",
+#         xaxis=dict(
+#             title="Lap Number",
+#             rangeslider=dict(visible=True),  # Add range slider for horizontal scrolling
+#         ),
+#         yaxis=dict(title="H Value"),
+#         legend=dict(orientation="h", x=0.5, y=-0.2, xanchor="center"),
+#     )
+
+#     fig = go.Figure(data=[trace_est_H, trace_decode_H], layout=layout)
+
+#     # Save or show the plot
+#     if save_path:
+#         # Ensure directory exists
+#         os.makedirs(save_path, exist_ok=True)
+#         # Save as HTML
+#         filename = f"session_{session_idx}/{save_path}/h_over_laps_interactive_{tag}.html" if tag else f"{save_path}/h_over_laps_interactive.html"
+#         plot(fig, filename=filename, auto_open=False)
+#         print(f"Saved interactive plot to {filename}")
+#     else:
+#         # Display the interactive plot in the browser
+#         plot(fig)
 
 
 
