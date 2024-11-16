@@ -46,8 +46,9 @@ import plotly.graph_objs as go
 from plotly.offline import plot
 from matplotlib.widgets import Slider
 import mpld3
+from scipy.signal import butter, filtfilt
 
-def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, actual_angles=None):
+def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, actual_angles=None,true_angles=None):
     """
     Calculate the average difference between the predicted hippocampal angles
     decoded from the spline and the actual hippocampal angles.
@@ -64,6 +65,7 @@ def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principa
 
     # Decode angles from embeddings using the spline
     decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], principal_curve[:-1], actual_angles)
+    decoded_angles = decoded_angles + true_angles[3]
 
     angle_diff = abs(decoded_angles - actual_angles)
 
@@ -71,6 +73,17 @@ def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principa
     # avg_diff = calculate_average_angle_difference(decoded_angles, actual_angles)
 
     return angle_diff, decoded_angles, mse
+
+def smooth_derivative(data=None, window_size=3):
+    # Step 1: Compute finite differences
+    diffs = np.diff(data)
+    
+    # Step 2: Compute the moving average of differences
+    # Create a convolution kernel for averaging
+    kernel = np.ones(window_size) / window_size
+    avg_diffs = np.convolve(diffs, kernel, mode='valid')  # Valid ensures proper windowing
+    
+    return avg_diffs
 
 
 
@@ -620,7 +633,7 @@ def dist_tot_to_princ_curve(embeddings=None,principal_curve=None):
 
         return mean_distance
 
-def plot_in_2d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
+def plot_in_2d(embeddings=None,session=None, behav_var=None, name_behav_var=None,principal_curve=None):
     fig, ax = plt.subplots(figsize=(10,8))
     # 2D plot
     scatter_2d = ax.scatter(embeddings[:, 0], embeddings[:, 1],c=behav_var, cmap='viridis', s=5)
@@ -778,88 +791,103 @@ def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,
 
     return
 
-# def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
-#     """
-#     Calculate the hippocampal gain (H) between two time points t0 and t1
-#     by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
-#     of the embeddings at t0 and t1.
+def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
+    """
+    Calculate the hippocampal gain (H) between two time points t0 and t1
+    by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
+    of the embeddings at t0 and t1.
     
-#     Parameters:
-#     - principal_curve (np.ndarray): Array representing the principal manifold.
-#     - tt (np.ndarray): Array of parameterization along the principal curve.
-#     - embeddings (np.ndarray): Array of embedding vectors for each time point.
-#     - t0 (int): Starting time index.
-#     - t1 (int): Ending time index.
-#     - true_angle (np.ndarray): Array of true angles corresponding to each time point.
-#     - n_neighbors (int): Number of closest neighbors to consider (default=5).
+    Parameters:
+    - principal_curve (np.ndarray): Array representing the principal manifold.
+    - tt (np.ndarray): Array of parameterization along the principal curve.
+    - embeddings (np.ndarray): Array of embedding vectors for each time point.
+    - t0 (int): Starting time index.
+    - t1 (int): Ending time index.
+    - true_angle (np.ndarray): Array of true angles corresponding to each time point.
+    - n_neighbors (int): Number of closest neighbors to consider (default=5).
     
-#     Returns:
-#     - H (float): Calculated hippocampal gain between t0 and t1.
-#     """
+    Returns:
+    - H (float): Calculated hippocampal gain between t0 and t1.
+    """
     
-#     # Ensure t0 and t1 are within the valid range
-#     if t0 >= len(embeddings) or t1 >= len(embeddings):
-#         raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
+    # Ensure t0 and t1 are within the valid range
+    if t0 >= len(embeddings) or t1 >= len(embeddings):
+        raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
     
-#     # Fit Nearest Neighbors model on embeddings
-#     nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
+    # Fit Nearest Neighbors model on embeddings
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
     
-#     # Function to compute average tt value for a given embedding index
-#     def get_avg_tt(embedding_index):
-#         # Get the embedding at the specified index
-#         embedding_point = embeddings[embedding_index].reshape(1, -1)
-#         # Find the n_neighbors+1 closest embeddings (including itself)
-#         distances, indices = nbrs.kneighbors(embedding_point)
-#         # Exclude the embedding itself
-#         neighbor_indices = indices[0][1:]
-#         tt_values = []
-#         for idx in neighbor_indices:
-#             # Get the embedding of the neighbor
-#             embedding_neighbor = embeddings[idx].reshape(1, -1)
-#             # Find the closest manifold coordinate for the neighbor
-#             _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
-#             tt_value = tt[tt_index]
-#             tt_values.append(tt_value)
-#         # Calculate the mean of the tt values
-#         # print(f"IN CALCULATE H, the tt values: {tt_values}")
-#         return np.mean(tt_values)
+    # Function to compute average tt value for a given embedding index
+    def get_avg_tt(embedding_index):
+        # Get the embedding at the specified index
+        embedding_point = embeddings[embedding_index].reshape(1, -1)
+        # Find the n_neighbors+1 closest embeddings (including itself)
+        distances, indices = nbrs.kneighbors(embedding_point)
+        # Exclude the embedding itself
+        neighbor_indices = indices[0][1:]
+        tt_values = []
+        for idx in neighbor_indices:
+            # Get the embedding of the neighbor
+            embedding_neighbor = embeddings[idx].reshape(1, -1)
+            # Find the closest manifold coordinate for the neighbor
+            _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
+            tt_value = tt[tt_index]
+            tt_values.append(tt_value)
+        # Calculate the mean of the tt values
+        # print(f"IN CALCULATE H, the tt values: {tt_values}")
+        return np.mean(tt_values)
     
-#     # Get average tt values for t0 and t1
-#     avg_tt_t0 = get_avg_tt(t0)
-#     avg_tt_t1 = get_avg_tt(t1)
+    # Get average tt values for t0 and t1
+    avg_tt_t0 = get_avg_tt(t0)
+    avg_tt_t1 = get_avg_tt(t1)
     
-#     # Compute the difference in true angles
-#     true_angle_diff = true_angle[t1] - true_angle[t0]
-#     if true_angle_diff == 0:
-#         print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
-#         true_angle_diff += 1e-9  # Add a small value to avoid division by zero
+    # Compute the difference in true angles
+    true_angle_diff = true_angle[t1] - true_angle[t0]
+    if true_angle_diff == 0:
+        print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
+        true_angle_diff += 1e-9  # Add a small value to avoid division by zero
 
-#     # print(f"true_angle t0 : {true_angle[t0]}")
-#     # print(f"true_angle t1 : {true_angle[t1]}")
-#     # print(f"true_angle_diff is: {true_angle_diff}")
-#     # print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
+    # print(f"true_angle t0 : {true_angle[t0]}")
+    # print(f"true_angle t1 : {true_angle[t1]}")
+    # print(f"true_angle_diff is: {true_angle_diff}")
+    # print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
 
-#     # print(f"avg_tt_t0 is: {avg_tt_t0}")
-#     # print(f"avg_tt_t1 is: {avg_tt_t1}")
-#     # print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
-#     # print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
+    # print(f"avg_tt_t0 is: {avg_tt_t0}")
+    # print(f"avg_tt_t1 is: {avg_tt_t1}")
+    # print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
+    # print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
 
 
-#     # print(f"H value between {t0} and {t1}")
+    # print(f"H value between {t0} and {t1}")
     
-#     # Calculate the hippocampal gain H
-#     H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
+    # Calculate the hippocampal gain H
+    H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
 
-#     return H
+    return H
 
 def calculate_single_H_array(decoded_angle_t0=None, decoded_angle_t1=None, true_angle_t0=None, true_angle_t1=None):
 
-    true_diff = true_angle_t1-true_angle_t0
+    print(f"Inputs:")
+    print(f"  decoded_angle_t0: {decoded_angle_t0}")
+    print(f"  decoded_angle_t1: {decoded_angle_t1}")
+    print(f"  true_angle_t0: {true_angle_t0}")
+    print(f"  true_angle_t1: {true_angle_t1}")
+    
+    true_diff = true_angle_t1 - true_angle_t0
     if true_diff == 0:
         true_diff = 1e-6
-
-    H = ( ((decoded_angle_t1-decoded_angle_t0) % (2*np.pi))/((true_diff) % (2*np.pi)) )
-
+        print("  true_diff was zero, adjusted to 1e-6 to avoid division by zero.")
+    print(f"  true_diff: {true_diff}")
+    
+    decoded_diff = (decoded_angle_t1 - decoded_angle_t0) % (2 * np.pi)
+    print(f"  decoded_diff (wrapped to [0, 2π]): {decoded_diff}")
+    
+    wrapped_true_diff = true_diff % (2 * np.pi)
+    print(f"  wrapped_true_diff (wrapped to [0, 2π]): {wrapped_true_diff}")
+    
+    H = decoded_diff / wrapped_true_diff
+    print(f"  Calculated H: {H}")
+    
     return H
 
 def calculate_over_experiment_H_array(decoded_angles=None,true_angles=None,spacing=None):
@@ -916,67 +944,177 @@ def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,t
     
     return np.array(H_list)
 
-def plot_decode_H_vs_true_H(est_H=None, decode_H=None, session_idx=None, session=None, save_path=None, tag=None,SI_score=None,decode_err=None):
+def plot_Hs(est_H=None, decode_H=None, behav_var=None, behav_var_name=None, session_idx=None, 
+           session=None, save_path=None, tag=None, is_moving_avg=False, SI_score=None, decode_err=None):
     """
-    Plots estimated hippocampal gain (est_H) against decoded gain (decode_H), optionally applying a moving average.
-    
+    Plots estimated hippocampal gain (est_H) against decoded gain (decode_H).
+    Optionally, if moving averaged data and behavioral variables are provided, it plots them with color mapping.
+
     Parameters:
     - est_H (np.ndarray): Array of estimated gain values.
     - decode_H (np.ndarray): Array of decoded gain values.
+    - behav_var (np.ndarray, optional): Array of behavioral variable values (e.g., velocity).
+    - behav_var_name (str, optional): Name of the behavioral variable for labeling.
     - session_idx (int, optional): Session index for labeling purposes.
-    - session (object, optional): Session object containing metadata.
+    - session (object, optional): Session object containing metadata. Expected to have attributes 'rat', 'day', and 'epoch'.
     - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
-    - window_size (int, optional): Number of time steps to average over for smoothing (default=None).
-    
+    - tag (str, optional): Additional tag for the plot title and filename.
+    - is_moving_avg (bool, optional): Indicates if the data provided are moving averaged.
+    - SI_score (float, optional): SI score to display on the plot.
+    - decode_err (float, optional): Decode error to display on the plot.
+
     Returns:
     - None
     """
-
+    
+    # Validate input arrays
+    if est_H is None or decode_H is None:
+        raise ValueError("est_H and decode_H must both be provided.")
+    
+    if behav_var is not None and behav_var_name is None:
+        raise ValueError("behav_var_name must be provided if behav_var is used.")
+    
     # Find the overlapping range of indices
     min_length = min(len(est_H), len(decode_H))
-
-    # Trim est_gain and decode_gain to the overlapping range
+    if behav_var is not None:
+        min_length = min(min_length, len(behav_var))
+    
+    # Trim est_H, decode_H, and behav_var to the overlapping range
     est_gain_trimmed = est_H[:min_length]
     decode_gain_trimmed = decode_H[:min_length]
     times = np.arange(min_length)  # Time is just the index
-
+    
+    if behav_var is not None:
+        behav_var_trimmed = behav_var[:min_length]
+    
+    # Handle moving average adjustments if needed
+    if is_moving_avg and behav_var is not None:
+        # Assuming moving average was computed with 'valid' mode
+        # The trimmed arrays are already moving averaged, so times should be adjusted
+        # This requires the window_size to have been considered during averaging
+        # For simplicity, we'll assume the user has adjusted the times accordingly
+        pass  # No action needed; user is responsible for providing correct times
+    
+    # Calculate the overall averages of the data
     avg_est_gain = np.mean(est_gain_trimmed)
     avg_decode_gain = np.mean(decode_gain_trimmed)
-
-    # Plotting
-    plt.figure(figsize=(12, 6))
-    plt.plot(times, est_gain_trimmed, label='Estimated Gain', color='blue')
-    plt.plot(times, decode_gain_trimmed, label='Decoded Gain', color='red', alpha=0.7)
-
-    # Create an axes instance
-    ax = plt.gca()
+    if behav_var is not None:
+        avg_behav_var = np.mean(behav_var_trimmed)
     
-    avg_text = f'Avg Estimated Gain: {avg_est_gain:.2f}\nAvg Decoded Gain: {avg_decode_gain:.2f}\nSI Score: {SI_score:.2f}\nAvg_decode_err: {decode_err:.2f}'
+    # Create the plot
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    if behav_var is not None:
+        # Normalize the behavioral variable for color mapping
+        norm = mcolors.Normalize(vmin=np.min(behav_var_trimmed), vmax=np.max(behav_var_trimmed))
+        cmap = plt.get_cmap('viridis')  # Choose a suitable colormap
+        
+        # Create a ScalarMappable for the colorbar
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])  # Only needed for older versions of matplotlib
+        
+        # Create LineCollection for est_H
+        points_est = np.array([times, est_gain_trimmed]).T.reshape(-1, 1, 2)
+        segments_est = np.concatenate([points_est[:-1], points_est[1:]], axis=1)
+        lc_est = LineCollection(segments_est, colors=cmap(norm(behav_var_trimmed[:-1])), linewidths=2, label='Estimated Gain')
+        
+        # Create LineCollection for decode_H
+        points_decode = np.array([times, decode_gain_trimmed]).T.reshape(-1, 1, 2)
+        segments_decode = np.concatenate([points_decode[:-1], points_decode[1:]], axis=1)
+        lc_decode = LineCollection(segments_decode, colors=cmap(norm(behav_var_trimmed[:-1])), linewidths=2, label='Decoded Gain', alpha=0.7)
+        
+        # Add LineCollections to the Axes
+        ax.add_collection(lc_est)
+        ax.add_collection(lc_decode)
+        
+        # Add the colorbar to the figure
+        cbar = fig.colorbar(sm, ax=ax)
+        cbar.set_label(f'{behav_var_name}', fontsize=12)
+    else:
+        # Plot without behavioral variable coloring
+        ax.plot(times, est_gain_trimmed, label='Estimated Gain', color='blue')
+        ax.plot(times, decode_gain_trimmed, label='Decoded Gain', color='red', alpha=0.7)
+    
+    # Add dummy plot lines for the legend if using LineCollection
+    if behav_var is not None:
+        ax.plot([], [], color='blue', label='Estimated Gain')
+        ax.plot([], [], color='red', alpha=0.7, label='Decoded Gain')
+    
+    # Prepare the text for average values
+    avg_text = (
+        f'Overall Avg Estimated Gain: {avg_est_gain:.2f}\n'
+        f'Overall Avg Decoded Gain: {avg_decode_gain:.2f}\n'
+    )
+    if behav_var is not None:
+        avg_text += f'Overall Avg Behavioral Var: {avg_behav_var:.2f}\n'
+    if SI_score is not None:
+        avg_text += f'SI Score: {SI_score:.2f}\n'
+    if decode_err is not None:
+        avg_text += f'Avg Decode Err: {decode_err:.2f}'
     
     # Add text annotation in the top-left corner
-    ax.text(0.05, 0.95, avg_text, transform=ax.transAxes, fontsize=12,
-            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5))
+    ax.text(
+        0.05, 0.95, avg_text, transform=ax.transAxes, fontsize=12,
+        verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5)
+    )
     
+    # Setting labels and title
+    ax.set_xlabel('Time (s)', fontsize=14)
+    ax.set_ylabel('Gain', fontsize=14)
     
-
-    plt.xlabel('Time (s)', fontsize=14)
-    plt.ylabel('Gain', fontsize=14)
-    title = 'FT gain vs spline decoded Gain'
+    title = 'FT Gain vs Spline Decoded Gain'
+    if is_moving_avg:
+        title += ' (Moving Averages)'
+    if behav_var is not None:
+        title += f' Colored by {behav_var_name}'
+    
+    # Adding session information to the title if available
     if session_idx is not None and session is not None:
-        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}, Tag {tag}'
-    plt.title(title, fontsize=16)
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-
+        # Ensure that session has attributes 'rat', 'day', and 'epoch'
+        rat = getattr(session, 'rat', 'Unknown Rat')
+        day = getattr(session, 'day', 'Unknown Day')
+        epoch = getattr(session, 'epoch', 'Unknown Epoch')
+        title += f'\nSession {session_idx}: Rat {rat}, Day {day}, Epoch {epoch}'
+    
+    # Include the tag in the title if provided
+    if tag is not None:
+        title += f', Tag: {tag}'
+    
+    ax.set_title(title, fontsize=16)
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.5)
+    fig.tight_layout()
+    
+    # Set the limits based on the data
+    ax.set_xlim(times.min(), times.max())
+    ax.set_ylim(
+        min(np.min(est_gain_trimmed), np.min(decode_gain_trimmed)) - 0.1, 
+        max(np.max(est_gain_trimmed), np.max(decode_gain_trimmed)) + 0.1
+    )
+    
     # Save or show the plot
     if save_path:
-        save_path = f'{save_path}/h_plots/session_{session_idx}'
-        os.makedirs(save_path, exist_ok=True)
-        plt.savefig(f"{save_path}/h_est_vs_decode_{tag}.png", dpi=300)
-        plt.close()
-       
-        print(f"Saved plot to {save_path}")
+        if session_idx is not None:
+            # Define the directory structure
+            save_dir = os.path.join(save_path, 'h_plots', f'session_{session_idx}')
+        else:
+            save_dir = os.path.join(save_path, 'h_plots')
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Define the filename with tag if provided
+        filename = f"h_est_vs_decode"
+        if is_moving_avg:
+            filename += "_ma"
+        if tag:
+            filename += f"_{tag}"
+        filename += ".png"
+        
+        full_save_path = os.path.join(save_dir, filename)
+        
+        # Save the figure
+        fig.savefig(full_save_path, dpi=300)
+        plt.close(fig)  # Close the figure to free memory
+        print(f"Saved plot to {full_save_path}")
     else:
         plt.show()
 
@@ -1333,10 +1471,119 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
         # Display the plot in the default web browser
         plot(fig)
 
+def plot_decoded_var_and_true_interactive(decoded_var=None, behav_var=None, true_angle=None,
+                                         indices=None,
+                                         xlabel='Time (seconds)', 
+                                         ylabel1='Decoded Variable', 
+                                         ylabel2='Behavioral Variable', 
+                                         legend_labels=['Decoded Variable', 'Behavioral Variable', 'True Angle'],
+                                         save_path=None,
+                                         session_idx=None,
+                                         behav_var_name=None):
+    """
+    Plots decoded_var, behav_var, and true_angle interactively using Plotly and saves the plot as an HTML file.
+
+    Parameters:
+    - decoded_var (array-like): Array of decoded variables to plot.
+    - behav_var (array-like): Array of behavioral variables to plot.
+    - true_angle (array-like, optional): Array of true angle variables to plot.
+    - indices (list or array-like, optional): Specific indices to plot. Defaults to plotting the entire array.
+    - xlabel (str, optional): Label for the x-axis.
+    - ylabel1 (str, optional): Label for the decoded_var.
+    - ylabel2 (str, optional): Label for the behav_var.
+    - title (str, optional): Plot title.
+    - legend_labels (list, optional): Labels for the three variables.
+    - save_path (str, optional): Directory path to save the plot.
+    - session_idx (int, optional): Session index for labeling purposes.
+    - behav_var_name (str, optional): Name of the behavioral variable for labeling and filename.
+
+    Returns:
+    - None
+    """
+    min_length = min(len(decoded_var), len(behav_var), len(true_angle))
+    decoded_angles = decoded_var[:min_length]
+    binned_hipp_angle_rad = behav_var[:min_length]
+    binned_true_angle_rad = true_angle[:min_length]
+    # Set default indices to plot the entire array if not provided
+    if indices is None:
+        indices = np.arange(len(decoded_var))
+    else:
+        if isinstance(indices, slice):
+            indices = np.arange(len(decoded_var))[indices]
+        elif isinstance(indices, int):
+            indices = np.array([indices])
+        else:
+            indices = np.array(indices)
+    
+    # Extract the data for the specified indices
+    decoded_subset = np.array(decoded_var)[indices]
+    behav_subset = np.array(behav_var)[indices]
+    x_values = indices  # Assuming each index represents one second
+    
+    if true_angle is not None:
+        true_angle_subset = np.array(true_angle)[indices]
+    
+    # Create Plotly traces
+    trace_decoded = go.Scatter(
+        x=x_values,
+        y=decoded_subset,
+        mode='lines+markers',
+        name=legend_labels[0],
+        marker=dict(color='blue', symbol='circle'),
+        line=dict(color='blue')
+    )
+    
+    trace_behav = go.Scatter(
+        x=x_values,
+        y=behav_subset,
+        mode='lines+markers',
+        name=legend_labels[1],
+        marker=dict(color='red', symbol='x'),
+        line=dict(color='red', dash='dash')
+    )
+    
+    data = [trace_decoded, trace_behav]
+    
+    if true_angle is not None:
+        trace_true_angle = go.Scatter(
+            x=x_values,
+            y=true_angle_subset,
+            mode='lines+markers',
+            name=legend_labels[2],
+            marker=dict(color='green', symbol='square'),
+            line=dict(color='green', dash='dot')
+        )
+        data.append(trace_true_angle)
+    
+    # Define the layout
+    layout = go.Layout(
+        title=behav_var_name if session_idx is None else f"{behav_var_name} - Session {session_idx}",
+        xaxis=dict(title=xlabel),
+        yaxis=dict(title=ylabel1),
+        legend=dict(x=0, y=1.0),
+        hovermode='closest'
+    )
+    
+    fig = go.Figure(data=data, layout=layout)
+    
+    # Save the plot if save_path is provided
+    if save_path:
+        full_save_path = os.path.join(save_path, f'session_{session_idx}' if session_idx is not None else '')
+        os.makedirs(full_save_path, exist_ok=True)
+        
+        filename = f"SI_{behav_var_name}.html" if behav_var_name else "decoded_and_behavioral_variables.html"
+        file_path = os.path.join(full_save_path, filename)
+        
+        plot(fig, filename=file_path, auto_open=False)
+        print(f"Interactive plot saved to {file_path}")
+    
+    # Display the plot
+    fig.show()
 
 
 
-def plot_decode_H_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=None, session_idx=None, 
+
+def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=None, session_idx=None, 
                              session=None, save_path=None, tag=None, window_size=5,SI_score=None,decode_err=None):
     """
     Plots the moving averages of estimated hippocampal gain (est_H) against decoded gain (decode_H),
@@ -1695,7 +1942,7 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
     - None
     """
     # Set default number of points if indices not provided
-    n = 20
+    n = 250
     if indices is None:
         indices = range(n)
     else:
@@ -1792,7 +2039,7 @@ def get_H_over_lap(H=None, true_angle=None):
         raise ValueError("Both H and true_angle must be 1-dimensional arrays.")
     
     # Compute lap_number as true_angle divided by 360
-    lap_number = true_angle / (360)
+    lap_number = true_angle / (2*np.pi)
     
     # Sort lap_number and reorder H accordingly
     sorted_indices = np.argsort(lap_number)
@@ -1864,6 +2111,107 @@ def get_H_over_lap(H=None, true_angle=None):
 #     else:
 #         # Display the interactive plot in the browser
 #         plot(fig)
+
+def plot_and_save_behav_vars(binned_hipp_angle=None, binned_true_angle=None, binned_est_gain=None,
+                             save_dir=None, session_idx=None):
+    """
+    Plots binned hippocampal angle, true angle, and estimated gain on the same figure and saves the plot.
+
+    Parameters:
+    - binned_hipp_angle_rad (array-like): Binned hippocampal angles in radians.
+    - binned_true_angle_rad (array-like): Binned true angles in radians.
+    - binned_est_gain (array-like): Binned estimated gain values.
+    - save_dir (str): Base directory where the plot will be saved.
+    - session_idx (int): Index of the current session, used to create a subdirectory.
+    - behav_var_name (str): Name of the behavioral variable, used in the filename.
+
+    Returns:
+    - None
+    """
+
+    # Ensure all input arrays have the same length
+    if not (len(binned_hipp_angle) == len(binned_true_angle) == len(binned_est_gain)):
+        raise ValueError("All input arrays must have the same length.")
+
+    # Define the filename and full save path
+    filename = f"behav_vars.png"
+    full_save_path = os.path.join(save_dir, f'session_{session_idx}')
+    
+    # Create the directory if it doesn't exist
+    os.makedirs(full_save_path, exist_ok=True)
+    
+    # Create the figure and axis
+    fig, ax = plt.subplots(figsize=(12, 6))
+    
+    # Define the x-axis as bin indices
+    length = 100
+    x = np.arange(100)
+    
+    # Plot each behavioral variable
+    ax.plot(x, binned_hipp_angle[100:200], label='Hippocampal Angle (rad)', color='blue', linewidth=1.5)
+    ax.plot(x, binned_true_angle[100:200], label='True Angle (rad)', color='green', linewidth=1.5)
+    ax.plot(x, binned_est_gain[100:200], label='Estimated Gain', color='red', linewidth=1.5)
+    
+
+    ax.set_xlabel('time (s)', fontsize=14)
+    ax.set_ylabel('Value', fontsize=14)
+    ax.set_title(f'Behavioral Variables for Session {session_idx}', fontsize=16)
+    
+
+    ax.legend(fontsize=12)
+   
+    ax.grid(True, linestyle='--', alpha=0.6)
+  
+    plt.tight_layout()
+    
+    # Save the figure
+    save_path = os.path.join(full_save_path, filename)
+    fig.savefig(save_path, format='png', dpi=300, bbox_inches='tight')
+    print(f"Plot saved to {save_path}")
+    
+    plt.close(fig)
+
+def low_pass_filter(angles=None, cutoff_frequency=0.1, filter_order=3):
+    """
+    Apply a low-pass Butterworth filter to smooth the `decoded_angles` array.
+
+    Parameters:
+    - decoded_angles (np.array): The 1D array of angles sampled at 1 Hz.
+    - cutoff_frequency (float): The cutoff frequency for the low-pass filter (default: 0.1 Hz).
+    - filter_order (int): The order of the Butterworth filter (default: 3).
+
+    Returns:
+    - np.array: The smoothed array.
+    """
+    # Sampling frequency
+    fs = 1  # Hz
+    
+    # Normalize cutoff frequency with respect to Nyquist frequency (fs/2)
+    nyquist = 0.5 * fs
+    normalized_cutoff = cutoff_frequency / nyquist
+
+    #Butterworth low-pass filter
+    b, a = butter(filter_order, normalized_cutoff, btype='low', analog=False)
+    
+    # Apply the filter using filtfilt to preserve phase
+    smoothed_angles = filtfilt(b, a, angles)
+    
+    return smoothed_angles
+
+def compute_moving_average(data=None, window_size=None):
+    """
+    Computes the moving average of a 1D NumPy array.
+
+    Parameters:
+    - data (np.ndarray): Input data array.
+    - window_size (int): Size of the moving window.
+
+    Returns:
+    - np.ndarray: Moving averaged data.
+    """
+    
+    kernel = np.ones(window_size) / window_size
+    return np.convolve(data, kernel, mode='valid')
 
 
 
