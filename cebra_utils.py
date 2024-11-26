@@ -47,8 +47,12 @@ from plotly.offline import plot
 from matplotlib.widgets import Slider
 import mpld3
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import gaussian_filter
+from scipy.signal import savgol_filter
+from scipy import signal
+from scipy.interpolate import interp1d
 
-def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, actual_angles=None,true_angles=None):
+def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, behav_angles=None,true_angles=None):
     """
     Calculate the average difference between the predicted hippocampal angles
     decoded from the spline and the actual hippocampal angles.
@@ -64,17 +68,12 @@ def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principa
     """
 
     # Decode angles from embeddings using the spline
-    decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], principal_curve[:-1], actual_angles)
-    decoded_angles = decoded_angles + true_angles[3]
+    decoded_angles, mse = mff.decode_from_passed_fit(embeddings, tt[:-1], principal_curve[:-1], true_angles)
+    # decoded_angles = decoded_angles + true_angles[3]
 
-    angle_diff = abs(decoded_angles - actual_angles)
+    return decoded_angles, mse
 
-    # # Calculate average angular difference
-    # avg_diff = calculate_average_angle_difference(decoded_angles, actual_angles)
-
-    return angle_diff, decoded_angles, mse
-
-def smooth_derivative(data=None, window_size=3):
+def window_smooth(data=None, window_size=3):
     # Step 1: Compute finite differences
     diffs = np.diff(data)
     
@@ -299,7 +298,7 @@ def plot_time_vs_distance(embeddings, principal_curve, times,x_axis_var, annotat
     """
     # Compute Euclidean distances between embeddings and the spline
     distances = compute_min_distances(embeddings, principal_curve)
-    save_path = f"{save_path}/session_{session_idx}/dimension_{dimension}"
+    save_path = f"{save_path}/dimension_{dimension}"
 
     # Create the plot
     plt.figure(figsize=(12, 6))
@@ -366,7 +365,6 @@ def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
 
     ######
 
-    # **Plot the initial knots**
     # Define the save path for the plot
     if dimension_3d == 1:
         if results_save_path:
@@ -433,26 +431,25 @@ def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
 
     if ref_angle is not None:
         # Find the index of the closest hippocampal angle to the desired origin
-        #origin_idx = np.argmin(np.abs(ref_angle - hippocampal_angle_origin))
 
         tt = tt * 2*(np.pi)
 
         # Shift the tt values so that the origin is aligned with tt = 0
         print(f"ref_angle: {ref_angle}")
-        tt_shifted = tt
-        tt_shifted = (tt + ref_angle) % (2*np.pi) # Keep tt in the [0, 2*pi] range
+        tt_shifted = (tt + ref_angle[3]) % (2*np.pi) # Keep tt in the [0, 2*pi] range
         print(f"first 10 tts: {tt[:10]}")
         print(f"first 10 tt shifteds: {tt_shifted[:10]}")
         print(f"First 100 tts: {tt[:100]}")
 
-        # tt_diff = np.diff(tt_shifted)
+        tt_diff = np.diff(tt_shifted)
+        angle_diff = np.diff(ref_angle)
 
         # # Check if the signs of the slopes match, if not, reverse the tt and curve
-        # if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
-        #     print("Reversing spline direction to align with hippocampal angles")
-        #     tt_shifted = np.flip(tt_shifted)
-        #     curve = np.flip(curve, axis=0)
-        #     curve_pre = np.flip(curve_pre, axis=0)
+        if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
+            print("Reversing spline direction to align with hippocampal angles")
+            tt_shifted = np.flip(tt_shifted)
+            curve = np.flip(curve, axis=0)
+    
         
         
         tt = tt_shifted
@@ -460,36 +457,107 @@ def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
     return curve, curve_pre, tt
 
 
-def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
-    fig = plt.figure(figsize=(10, 8))
+# def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
+#     fig = plt.figure(figsize=(10, 8))
     
-     # 3D plot
-    ax2 = fig.add_subplot(122, projection='3d')
-    scatter_3d = ax2.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2])
-    ax2.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
-    ax2.set_xlabel('Embedding Dimension 1')
-    ax2.set_ylabel('Embedding Dimension 2')
-    ax2.set_zlabel('Embedding Dimension 3')
+#      # 3D plot
+#     ax2 = fig.add_subplot(122, projection='3d')
+#     scatter_3d = ax2.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2])
+#     ax2.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
+#     ax2.set_xlabel('Embedding Dimension 1')
+#     ax2.set_ylabel('Embedding Dimension 2')
+#     ax2.set_zlabel('Embedding Dimension 3')
 
 
-    # Plotting
+#     # Plotting
+#     fig = plt.figure(figsize=(10, 8))
+#     ax = fig.add_subplot(111, projection='3d')
+
+#     # Plot the original points
+#     scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], 
+#                         c=behav_var, cmap='viridis', s=5)
+#     if(principal_curve is not None):
+#         # Plot the principal curve
+#         ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
+
+#     ax.set_xlabel('CEBRA Dimension 1')
+#     ax.set_ylabel('CEBRA Dimension 2')
+#     ax.set_zlabel('CEBRA Dimension 3')
+#     ax.set_title('Principal Curve of CEBRA-processed Neural Data')
+
+#     plt.colorbar(scatter, label=f'{name_behav_var}')
+#     plt.show()
+
+def plot_in_3d_static(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, 
+                          save_path=None, principal_curve=None, tt=None, num_labels=10, 
+                          mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None):
+    """
+    Plots a static 3D plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
+    Labels a certain number of points evenly spaced along the spline and saves the plot.
+
+    Parameters:
+    - embeddings_3d: 3D embeddings to plot.
+    - session: Session metadata (for title).
+    - behav_var: Behavioral variable to color-code the points.
+    - name_behav_var: Name of the behavioral variable (for labeling).
+    - save_path: Path to save the static plot.
+    - principal_curve: The spline fitted to the embeddings.
+    - tt: Parametrization along the spline (optional, for coloring the spline).
+    - num_labels: Number of evenly spaced labels to add along the spline.
+    """
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection='3d')
+    ax.set_facecolor('white')
 
-    # Plot the original points
-    scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], 
-                        c=behav_var, cmap='viridis', s=5)
-    if(principal_curve is not None):
-        # Plot the principal curve
-        ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
+    # Normalize `behav_var` and `tt` to use the same color scale
+    cmap = plt.get_cmap('viridis')
+    norm = plt.Normalize(vmin=np.min(tt), vmax=np.max(tt))
 
-    ax.set_xlabel('CEBRA Dimension 1')
-    ax.set_ylabel('CEBRA Dimension 2')
-    ax.set_zlabel('CEBRA Dimension 3')
-    ax.set_title('Principal Curve of CEBRA-processed Neural Data')
-
+    # Scatter plot of embeddings using behav_var as color map
+    scatter = ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], 
+                         c=behav_var, cmap=cmap, s=5)
     plt.colorbar(scatter, label=f'{name_behav_var}')
-    plt.show()
+
+    # Plot the principal curve with the same color map, colored by `tt` values
+    if principal_curve is not None:
+        for i in range(len(principal_curve) - 1):
+            if tt is not None:
+                color = cmap(norm(tt[i]))  # Assign color based on normalized tt
+            else:
+                color = 'red'
+            ax.plot(principal_curve[i:i+2, 0], principal_curve[i:i+2, 1], principal_curve[i:i+2, 2], 
+                    color=color, linewidth=2)
+
+        # Add labels at evenly spaced points along the spline
+        label_indices = np.linspace(0, len(principal_curve) - 1, num_labels, dtype=int)
+        if tt is not None:
+            for idx in label_indices:
+                x, y, z = principal_curve[idx]
+                ax.text(x, y, z, f'tt={tt[idx]:.2f}', color='black', fontsize=8)
+
+    # Annotate mean distance and angle differences
+    if mean_dist is not None:
+        fig.text(
+            0.05, 0.95,
+            f'Mean Distance: {mean_dist:.2f}, Avg Angle Diff: {avg_angle_diff:.2f} ({avg_angle_diff * (360/(2*np.pi)):.2f}°), '
+            f'Shuffled Avg Angle Diff: {shuffled_avg_angle_diff:.2f} ({shuffled_avg_angle_diff * (360/(2*np.pi)):.2f}°)',
+            fontsize=10, verticalalignment='top', 
+            bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=5)
+        )
+
+    # Add title and axis labels
+    ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
+    ax.set_xlabel('Embedding Dimension 1')
+    ax.set_ylabel('Embedding Dimension 2')
+    ax.set_zlabel('Embedding Dimension 3')
+    ax.grid(False)
+
+    # Save the plot
+    if save_path and principal_curve is not None:
+        plt.savefig(f"{save_path}_{name_behav_var}_static_princ", dpi=300, bbox_inches='tight')
+    elif save_path and principal_curve is None:
+        plt.savefig(f"{save_path}_{name_behav_var}_static_no_princ", dpi=300, bbox_inches='tight')
+
     
 
 def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10, mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None):
@@ -518,9 +586,10 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
     print("Number of NaNs in tt:", np.sum(np.isnan(tt)))
     print("Number of Infs in tt:", np.sum(np.isinf(tt)))
 
-    # valid_indices = ~np.isnan(behav_var) & ~np.isnan(embeddings_3d).any(axis=1)
-    # behav_var = behav_var[valid_indices]
-    # embeddings_3d = embeddings_3d[valid_indices]
+    mean_dist=float(mean_dist)
+    avg_angle_diff=float(avg_angle_diff)
+    shuffled_avg_angle_diff=float(shuffled_avg_angle_diff)
+
 
     # # Normalize `behav_var` and `tt` to use the same color scale
     cmap = plt.get_cmap('viridis')
@@ -576,30 +645,8 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
 
     return anim
 
-# def apply_cebra(neural_data=None,model_architecture='offset10-model',
-#                         batch_size=512,
-#                         learning_rate=3e-4,
-#                         temperature_mode = 'constant',
-#                         temperature=1,
-#                         min_temperature = 1e-1,
-#                         output_dimension=3,
-#                         max_iterations=5000,
-#                         distance='cosine',
-#                         device='cuda_if_available',
-#                         verbose=True):
-    
-#     model = cebra.CEBRA(model_architecture=model_architecture,
-#                         batch_size=batch_size,
-#                         learning_rate=learning_rate,
-#                         temperature_mode = temperature_mode,
-#                         temperature=temperature,
-#                         min_temperature = min_temperature,
-#                         output_dimension=output_dimension,
-#                         max_iterations=max_iterations,
-#                         distance=distance,
-#                         device=device,
-#                         verbose=verbose)
-def apply_cebra(neural_data=None,output_dimension=3):
+
+def apply_cebra(neural_data=None,output_dimension=3,temperature=1):
 
     ''' default hyper-params for CEBRA model
 
@@ -615,7 +662,7 @@ def apply_cebra(neural_data=None,output_dimension=3):
 
     '''
      
-    model = cebra.CEBRA(output_dimension=output_dimension, max_iterations=1000, batch_size = 512)   
+    model = cebra.CEBRA(output_dimension=output_dimension, max_iterations=1000, batch_size = 512,temperature=temperature)   
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
     return embeddings
@@ -657,6 +704,9 @@ def compute_min_distances(embeddings, principal_curve):
     Returns:
     - distances (np.ndarray): Array of minimum distances (num_embeddings,).
     """
+
+    principal_curve = interpolate_principal_curve(principal_curve)
+
     # Build a KDTree for the principal curve
     tree = KDTree(principal_curve)
 
@@ -665,6 +715,7 @@ def compute_min_distances(embeddings, principal_curve):
 
     return distances
 
+#not in use
 def interpolate_principal_curve(principal_curve, points_per_unit_distance=10):
     """
     Linearly interpolates between each pair of consecutive points in the principal curve.
@@ -700,6 +751,8 @@ def interpolate_principal_curve(principal_curve, points_per_unit_distance=10):
     
     return interpolated_curve
 
+
+#not in use
 def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, session, hipp_angle_binned, true_angle_binned, principal_curve_2d, principal_curve_3d, save_path):
     """
     Plot CEBRA 2D, CEBRA 3D (projected to 2D), and UMAP 2D embeddings side by side.
@@ -751,7 +804,7 @@ def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, 
     
     return
 
-
+#not in use
 def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,true_angle_binned,principal_curve_2d,principal_curve_3d,session,session_idx,results_save_path):
     # Compute UMAP embeddings
     print("Computing UMAP embeddings...")
@@ -791,106 +844,35 @@ def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,
 
     return
 
-def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
-    """
-    Calculate the hippocampal gain (H) between two time points t0 and t1
-    by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
-    of the embeddings at t0 and t1.
-    
-    Parameters:
-    - principal_curve (np.ndarray): Array representing the principal manifold.
-    - tt (np.ndarray): Array of parameterization along the principal curve.
-    - embeddings (np.ndarray): Array of embedding vectors for each time point.
-    - t0 (int): Starting time index.
-    - t1 (int): Ending time index.
-    - true_angle (np.ndarray): Array of true angles corresponding to each time point.
-    - n_neighbors (int): Number of closest neighbors to consider (default=5).
-    
-    Returns:
-    - H (float): Calculated hippocampal gain between t0 and t1.
-    """
-    
-    # Ensure t0 and t1 are within the valid range
-    if t0 >= len(embeddings) or t1 >= len(embeddings):
-        raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
-    
-    # Fit Nearest Neighbors model on embeddings
-    nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
-    
-    # Function to compute average tt value for a given embedding index
-    def get_avg_tt(embedding_index):
-        # Get the embedding at the specified index
-        embedding_point = embeddings[embedding_index].reshape(1, -1)
-        # Find the n_neighbors+1 closest embeddings (including itself)
-        distances, indices = nbrs.kneighbors(embedding_point)
-        # Exclude the embedding itself
-        neighbor_indices = indices[0][1:]
-        tt_values = []
-        for idx in neighbor_indices:
-            # Get the embedding of the neighbor
-            embedding_neighbor = embeddings[idx].reshape(1, -1)
-            # Find the closest manifold coordinate for the neighbor
-            _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
-            tt_value = tt[tt_index]
-            tt_values.append(tt_value)
-        # Calculate the mean of the tt values
-        # print(f"IN CALCULATE H, the tt values: {tt_values}")
-        return np.mean(tt_values)
-    
-    # Get average tt values for t0 and t1
-    avg_tt_t0 = get_avg_tt(t0)
-    avg_tt_t1 = get_avg_tt(t1)
-    
-    # Compute the difference in true angles
-    true_angle_diff = true_angle[t1] - true_angle[t0]
-    if true_angle_diff == 0:
-        print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
-        true_angle_diff += 1e-9  # Add a small value to avoid division by zero
 
-    # print(f"true_angle t0 : {true_angle[t0]}")
-    # print(f"true_angle t1 : {true_angle[t1]}")
-    # print(f"true_angle_diff is: {true_angle_diff}")
-    # print(f"true_angle_diff mod is: {true_angle_diff % (2*np.pi)}")
-
-    # print(f"avg_tt_t0 is: {avg_tt_t0}")
-    # print(f"avg_tt_t1 is: {avg_tt_t1}")
-    # print(f"avg_tt_diifis: {(avg_tt_t1 - avg_tt_t0)}")
-    # print(f"avg_tt_diif mod is: {(avg_tt_t1 - avg_tt_t0) % (2*np.pi)}")
-
-
-    # print(f"H value between {t0} and {t1}")
-    
-    # Calculate the hippocampal gain H
-    H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
-
-    return H
-
-def calculate_single_H_array(decoded_angle_t0=None, decoded_angle_t1=None, true_angle_t0=None, true_angle_t1=None):
-
-    print(f"Inputs:")
-    print(f"  decoded_angle_t0: {decoded_angle_t0}")
-    print(f"  decoded_angle_t1: {decoded_angle_t1}")
-    print(f"  true_angle_t0: {true_angle_t0}")
-    print(f"  true_angle_t1: {true_angle_t1}")
-    
-    true_diff = true_angle_t1 - true_angle_t0
-    if true_diff == 0:
-        true_diff = 1e-6
-        print("  true_diff was zero, adjusted to 1e-6 to avoid division by zero.")
-    print(f"  true_diff: {true_diff}")
-    
-    decoded_diff = (decoded_angle_t1 - decoded_angle_t0) % (2 * np.pi)
-    print(f"  decoded_diff (wrapped to [0, 2π]): {decoded_diff}")
-    
-    wrapped_true_diff = true_diff % (2 * np.pi)
-    print(f"  wrapped_true_diff (wrapped to [0, 2π]): {wrapped_true_diff}")
-    
-    H = decoded_diff / wrapped_true_diff
-    print(f"  Calculated H: {H}")
-    
-    return H
-
+#not in use
 def calculate_over_experiment_H_array(decoded_angles=None,true_angles=None,spacing=None):
+
+    def calculate_single_H_array(decoded_angle_t0=None, decoded_angle_t1=None, true_angle_t0=None, true_angle_t1=None):
+
+        print(f"Inputs:")
+        print(f"  decoded_angle_t0: {decoded_angle_t0}")
+        print(f"  decoded_angle_t1: {decoded_angle_t1}")
+        print(f"  true_angle_t0: {true_angle_t0}")
+        print(f"  true_angle_t1: {true_angle_t1}")
+        
+        true_diff = true_angle_t1 - true_angle_t0
+        if true_diff == 0:
+            true_diff = 1e-6
+            print("  true_diff was zero, adjusted to 1e-6 to avoid division by zero.")
+        print(f"  true_diff: {true_diff}")
+        
+        decoded_diff = (decoded_angle_t1 - decoded_angle_t0) % (2 * np.pi)
+        print(f"  decoded_diff (wrapped to [0, 2π]): {decoded_diff}")
+        
+        wrapped_true_diff = true_diff % (2 * np.pi)
+        print(f"  wrapped_true_diff (wrapped to [0, 2π]): {wrapped_true_diff}")
+        
+        H = decoded_diff / wrapped_true_diff
+        print(f"  Calculated H: {H}")
+        
+        return H
+    
     print(f"decoded: {len(decoded_angles)}")
     print(f"true: {len(true_angles)}")
 
@@ -905,8 +887,70 @@ def calculate_over_experiment_H_array(decoded_angles=None,true_angles=None,spaci
     return np.array(H_list)
 
 
-
+#not in use
 def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None,num_avg_over=2, spacing=0, n_neighbors=5):
+
+    def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
+        """
+        Calculate the hippocampal gain (H) between two time points t0 and t1
+        by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
+        of the embeddings at t0 and t1.
+        
+        Parameters:
+        - principal_curve (np.ndarray): Array representing the principal manifold.
+        - tt (np.ndarray): Array of parameterization along the principal curve.
+        - embeddings (np.ndarray): Array of embedding vectors for each time point.
+        - t0 (int): Starting time index.
+        - t1 (int): Ending time index.
+        - true_angle (np.ndarray): Array of true angles corresponding to each time point.
+        - n_neighbors (int): Number of closest neighbors to consider (default=5).
+        
+        Returns:
+        - H (float): Calculated hippocampal gain between t0 and t1.
+        """
+        
+        # Ensure t0 and t1 are within the valid range
+        if t0 >= len(embeddings) or t1 >= len(embeddings):
+            raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
+        
+        # Fit Nearest Neighbors model on embeddings
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
+        
+        # Function to compute average tt value for a given embedding index
+        def get_avg_tt(embedding_index):
+            # Get the embedding at the specified index
+            embedding_point = embeddings[embedding_index].reshape(1, -1)
+            # Find the n_neighbors+1 closest embeddings (including itself)
+            distances, indices = nbrs.kneighbors(embedding_point)
+            # Exclude the embedding itself
+            neighbor_indices = indices[0][1:]
+            tt_values = []
+            for idx in neighbor_indices:
+                # Get the embedding of the neighbor
+                embedding_neighbor = embeddings[idx].reshape(1, -1)
+                # Find the closest manifold coordinate for the neighbor
+                _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
+                tt_value = tt[tt_index]
+                tt_values.append(tt_value)
+            # Calculate the mean of the tt values
+            # print(f"IN CALCULATE H, the tt values: {tt_values}")
+            return np.mean(tt_values)
+        
+        # Get average tt values for t0 and t1
+        avg_tt_t0 = get_avg_tt(t0)
+        avg_tt_t1 = get_avg_tt(t1)
+        
+        # Compute the difference in true angles
+        true_angle_diff = true_angle[t1] - true_angle[t0]
+        if true_angle_diff == 0:
+            print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
+            true_angle_diff += 1e-9  # Add a small value to avoid division by zero
+
+        
+        # Calculate the hippocampal gain H
+        H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
+
+        return H
 
     """
     Calculate the hippocampal gain (H) over an entire experiment by averaging over specified time steps.
@@ -944,7 +988,7 @@ def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,t
     
     return np.array(H_list)
 
-def plot_Hs(est_H=None, decode_H=None, behav_var=None, behav_var_name=None, session_idx=None, 
+def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=None, session_idx=None, 
            session=None, save_path=None, tag=None, is_moving_avg=False, SI_score=None, decode_err=None):
     """
     Plots estimated hippocampal gain (est_H) against decoded gain (decode_H).
@@ -1220,145 +1264,153 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
     else:
         plt.show()
 
-def plot_Hs_over_laps_moving_average(est_H=None, decode_H=None, lap_number=None, window_size=20, 
-                                    session_idx=None, session=None, 
-                                    save_path=None, tag=None, SI_score=None, decode_err=None):
-    """
-    Plots two H values (est_H and decode_H) against lap numbers with a moving average, 
-    optionally annotating with session information and saving the plot.
+
+# def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
+#                                   save_path=None, tag=None, SI_score=None, decode_err=None,mean_diff=None,std_diff=None):
+#     """
+#     Plots two H values against lap numbers using Plotly for interactivity.
+
+#     Parameters:
+#     - est_H (np.ndarray): Array of the first H values to plot.
+#     - decode_H (np.ndarray): Array of the second H values to plot.
+#     - lap_number (np.ndarray): Array of lap numbers corresponding to each H value.
+#     - session_idx (int, optional): Session index for labeling purposes.
+#     - session (object, optional): Session object containing metadata.
+#     - save_path (str, optional): Directory path to save the plot HTML file.
+#     - tag (str, optional): Tag to include in the saved plot's filename.
+#     - SI_score (float, optional): Score to annotate on the plot.
+#     - decode_err (float, optional): Decoding error to annotate on the plot.
+
+#     Returns:
+#     - None
+#     """
     
+#     # Input validation
+#     if est_H is None or decode_H is None or lap_number is None:
+#         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
+    
+#     est_H = np.asarray(est_H)
+#     decode_H = np.asarray(decode_H)
+#     lap_number = np.asarray(lap_number)
+    
+#     if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1:
+#         raise ValueError("est_H, decode_H, and lap_number must all be 1-dimensional arrays.")
+    
+#     # Find the overlapping range of indices
+#     min_length = min(len(est_H), len(decode_H), len(lap_number))
+    
+#     # Trim est_H, decode_H, and lap_number to the overlapping range
+#     est_H_trimmed = est_H[:min_length]
+#     decode_H_trimmed = decode_H[:min_length]
+#     lap_trimmed = lap_number[:min_length]
+    
+#     # Compute average values for annotations
+#     avg_est_H = np.mean(est_H_trimmed)
+#     avg_decode_H = np.mean(decode_H_trimmed)
+
+#     # Create interactive plot
+#     trace_est_H = go.Scatter(
+#         x=lap_trimmed,
+#         y=est_H_trimmed,
+#         mode='lines+markers',
+#         name='est_H Value',
+#         line=dict(color='blue'),
+#         marker=dict(symbol='circle')
+#     )
+
+#     trace_decode_H = go.Scatter(
+#         x=lap_trimmed,
+#         y=decode_H_trimmed,
+#         mode='lines+markers',
+#         name='decode_H Value',
+#         line=dict(color='red', dash='dash'),
+#         marker=dict(symbol='x')
+#     )
+
+#     data = [trace_est_H, trace_decode_H]
+
+#     # Prepare annotation text
+#     annotation_text = f'Avg est_H: {avg_est_H:.2f}<br>Avg decode_H: {avg_decode_H:.2f}'
+#     if SI_score is not None:
+#         annotation_text += f'<br>SI Score: {SI_score:.2f}'
+#     if decode_err is not None:
+#         annotation_text += f'<br>Decode Error: {decode_err:.2f}'
+#     if mean_diff is not None:
+#         annotation_text += f'<br>mean_diff: {mean_diff:.2f}'
+#     if std_diff is not None:
+#         annotation_text += f'<br>std_diff: {std_diff:.2f}'
+
+#     # Define the base title text with session information if available
+#     base_title = 'est_H and decode_H Values Over Laps'
+#     if session_idx is not None and session is not None:
+#         base_title += f'<br>Session {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+#         if tag is not None:
+#             base_title += f', Tag {tag}'
+#     elif tag is not None:
+#         base_title += f'<br>Tag: {tag}'
+
+#     # Create layout with title as a dictionary and annotations
+#     layout = go.Layout(
+#         title={'text': base_title},  # Set the title text correctly as a dictionary
+#         xaxis=dict(title='Lap Number'),
+#         yaxis=dict(title='H Value'),
+#         annotations=[
+#             dict(
+#                 xref='paper', yref='paper',
+#                 x=0.01, y=0.99,
+#                 xanchor='left', yanchor='top',
+#                 text=annotation_text,
+#                 showarrow=False,
+#                 font=dict(size=12),
+#                 bordercolor='black',
+#                 borderwidth=1,
+#                 borderpad=5,
+#                 bgcolor='white',
+#                 opacity=0.8
+#             )
+#         ]
+#     )
+
+#     fig = go.Figure(data=data, layout=layout)
+
+#     # Save or show the plot
+#     if save_path:
+#         # Construct the directory path
+#         dir_components = [save_path, 'h_plots_interactive']
+#         if session_idx is not None:
+#             dir_components.append(f'session_{session_idx}')
+#         dir_path = os.path.join(*dir_components)
+#         os.makedirs(dir_path, exist_ok=True)
+
+#         # Construct the filename
+#         filename = f"h_over_laps_{tag}.html" if tag else "h_over_laps.html"
+#         full_path = os.path.join(dir_path, filename)
+
+#         # Save the plot as an HTML file
+#         plot(fig, filename=full_path, auto_open=False)
+#         print(f"Saved interactive plot to {full_path}")
+#     else:
+#         # Display the plot in the default web browser
+#         plot(fig)
+
+def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, behav_var=None, session_idx=None, session=None, 
+                                  save_path=None, tag=None, SI_score=None, decode_err=None, mean_diff=None, std_diff=None,behav_var_name=None):
+    """
+    Plots two H values against lap numbers using Plotly for interactivity, with markers colored based on a behavioral variable.
+
     Parameters:
     - est_H (np.ndarray): Array of the first H values to plot.
     - decode_H (np.ndarray): Array of the second H values to plot.
     - lap_number (np.ndarray): Array of lap numbers corresponding to each H value.
-    - window_size (int, optional): Size of the moving average window. Defaults to 100.
-    - session_idx (int, optional): Session index for labeling purposes.
-    - session (object, optional): Session object containing metadata (e.g., rat ID, day, epoch).
-    - save_path (str, optional): Directory path to save the plot. If None, the plot is displayed.
-    - tag (str, optional): Tag to include in the saved plot's filename.
-    - SI_score (float, optional): Score to annotate on the plot.
-    - decode_err (float, optional): Decoding error to annotate on the plot.
-    
-    Returns:
-    - None
-    """
-    
-    # Input validation
-    if est_H is None or decode_H is None or lap_number is None:
-        raise ValueError("est_H, decode_H, and lap_number must all be provided.")
-    
-    est_H = np.asarray(est_H)
-    decode_H = np.asarray(decode_H)
-    lap_number = np.asarray(lap_number)
-    
-    if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1:
-        raise ValueError("est_H, decode_H, and lap_number must all be 1-dimensional arrays.")
-    
-    # Determine the minimum length among the inputs
-    min_length = min(len(est_H), len(decode_H), len(lap_number))
-    
-    # Check if trimming is necessary
-    if not (len(est_H) == len(decode_H) == len(lap_number)):
-        print(f"Input arrays have different lengths. Trimming to the smallest length: {min_length}.")
-    
-    # Trim est_H, decode_H, and lap_number to the overlapping range
-    est_H_trimmed = est_H[:min_length]
-    decode_H_trimmed = decode_H[:min_length]
-    lap_trimmed = lap_number[:min_length]
-    
-    # Validate window_size
-    if not isinstance(window_size, int) or window_size < 1:
-        raise ValueError("window_size must be a positive integer.")
-    if window_size > min_length:
-        raise ValueError(f"window_size ({window_size}) is larger than the data length ({min_length}).")
-    
-    # Function to compute moving average
-    def moving_average(data, window):
-        return np.convolve(data, np.ones(window)/window, mode='same')
-    
-    # Apply moving average
-    est_H_ma = moving_average(est_H_trimmed, window_size)
-    decode_H_ma = moving_average(decode_H_trimmed, window_size)
-    
-    # Compute average values for annotations based on moving average
-    avg_est_H = np.mean(est_H_ma)
-    avg_decode_H = np.mean(decode_H_ma)
-    
-    # Plotting
-    plt.figure(figsize=(12, 6))
-    plt.plot(lap_trimmed, est_H_ma, label='est_H (Moving Avg)', color='blue', linestyle='-')
-    plt.plot(lap_trimmed, decode_H_ma, label='decode_H (Moving Avg)', color='red', linestyle='--')
-    
-    # Create an axes instance
-    ax = plt.gca()
-    
-    # Prepare annotation text
-    annotation_text = f'Avg est_H (MA): {avg_est_H:.2f}\nAvg decode_H (MA): {avg_decode_H:.2f}'
-    if SI_score is not None:
-        annotation_text += f'\nSI Score: {SI_score:.2f}'
-    if decode_err is not None:
-        annotation_text += f'\nDecode Error: {decode_err:.2f}'
-    
-    # Add text annotation in the top-left corner
-    ax.text(0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=12,
-            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5))
-    
-    plt.xlabel('Lap Number', fontsize=14)
-    plt.ylabel('H Value (Moving Average)', fontsize=14)
-    title = 'est_H and decode_H Values Over Laps (Moving Average)'
-    
-    if session_idx is not None and session is not None:
-        # Assuming session object has attributes: rat, day, epoch
-        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
-        if tag is not None:
-            title += f', Tag {tag}'
-    elif tag is not None:
-        title += f'\nTag: {tag}'
-    
-    plt.title(title, fontsize=16)
-    plt.legend()
-    plt.grid(True, linestyle='--', alpha=0.5)
-    plt.tight_layout()
-    
-    # Save or show the plot
-    if save_path:
-        # Construct the directory path
-        dir_components = [save_path, 'h_plots']
-        if session_idx is not None:
-            dir_components.append(f'session_{session_idx}')
-        dir_path = os.path.join(*dir_components)
-        os.makedirs(dir_path, exist_ok=True)
-        
-        # Construct the filename
-        if tag:
-            filename = f"h_over_laps_MA_{tag}.png"
-        else:
-            filename = "h_over_laps_MA.png"
-        full_path = os.path.join(dir_path, filename)
-        
-        plt.savefig(full_path, dpi=300)
-        plt.close()
-        
-        print(f"Saved plot to {full_path}")
-    else:
-        plt.show()
-
-def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
-                                  save_path=None, tag=None, SI_score=None, decode_err=None,mean_diff=None,std_diff=None):
-    """
-    Plots two H values against lap numbers using Plotly for interactivity.
-
-    Parameters:
-    - est_H (np.ndarray): Array of the first H values to plot.
-    - decode_H (np.ndarray): Array of the second H values to plot.
-    - lap_number (np.ndarray): Array of lap numbers corresponding to each H value.
+    - behav_var (np.ndarray): Array of behavioral variable values to map to colors.
     - session_idx (int, optional): Session index for labeling purposes.
     - session (object, optional): Session object containing metadata.
     - save_path (str, optional): Directory path to save the plot HTML file.
     - tag (str, optional): Tag to include in the saved plot's filename.
     - SI_score (float, optional): Score to annotate on the plot.
     - decode_err (float, optional): Decoding error to annotate on the plot.
-
+    - mean_diff (float, optional): Mean difference to annotate on the plot.
+    - std_diff (float, optional): Standard deviation difference to annotate on the plot.
     Returns:
     - None
     """
@@ -1366,47 +1418,65 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
     # Input validation
     if est_H is None or decode_H is None or lap_number is None:
         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
+    if behav_var is None:
+        raise ValueError("behav_var must be provided for color mapping.")
     
     est_H = np.asarray(est_H)
     decode_H = np.asarray(decode_H)
     lap_number = np.asarray(lap_number)
+    behav_var = np.asarray(behav_var)
     
-    if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1:
-        raise ValueError("est_H, decode_H, and lap_number must all be 1-dimensional arrays.")
+    if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1 or behav_var.ndim !=1:
+        raise ValueError("est_H, decode_H, lap_number, and behav_var must all be 1-dimensional arrays.")
     
-    # Find the overlapping range of indices
-    min_length = min(len(est_H), len(decode_H), len(lap_number))
+    # Ensure behav_var matches the data length
+    min_length = min(len(est_H), len(decode_H), len(lap_number), len(behav_var))
     
-    # Trim est_H, decode_H, and lap_number to the overlapping range
     est_H_trimmed = est_H[:min_length]
     decode_H_trimmed = decode_H[:min_length]
     lap_trimmed = lap_number[:min_length]
+    behav_var_trimmed = behav_var[:min_length]
     
     # Compute average values for annotations
     avg_est_H = np.mean(est_H_trimmed)
     avg_decode_H = np.mean(decode_H_trimmed)
-
-    # Create interactive plot
+    
+    # Define color scale
+    colorscale = 'Viridis'  # You can choose other Plotly colorscales like 'Cividis', 'Plasma', etc.
+    
+    # Define color range based on behav_var
+    cmin = np.min(behav_var_trimmed)
+    cmax = np.max(behav_var_trimmed)
+    
+    # Create interactive plot with color mapping
     trace_est_H = go.Scatter(
         x=lap_trimmed,
         y=est_H_trimmed,
         mode='lines+markers',
         name='est_H Value',
         line=dict(color='blue'),
-        marker=dict(symbol='circle')
+        marker=dict(symbol='circle', size=8)
     )
 
     trace_decode_H = go.Scatter(
         x=lap_trimmed,
         y=decode_H_trimmed,
-        mode='lines+markers',
+        mode='markers+lines',
         name='decode_H Value',
         line=dict(color='red', dash='dash'),
-        marker=dict(symbol='x')
+        marker=dict(
+            symbol='x',
+            size=8,
+            color=behav_var_trimmed,
+            colorscale=colorscale,
+            cmin=cmin,
+            cmax=cmax,
+            showscale=False  # Hide colorbar for the second trace
+        )
     )
-
+    
     data = [trace_est_H, trace_decode_H]
-
+    
     # Prepare annotation text
     annotation_text = f'Avg est_H: {avg_est_H:.2f}<br>Avg decode_H: {avg_decode_H:.2f}'
     if SI_score is not None:
@@ -1414,10 +1484,10 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
     if decode_err is not None:
         annotation_text += f'<br>Decode Error: {decode_err:.2f}'
     if mean_diff is not None:
-        annotation_text += f'<br>mean_diff: {mean_diff:.2f}'
+        annotation_text += f'<br>Mean Diff: {mean_diff:.2f}'
     if std_diff is not None:
-        annotation_text += f'<br>std_diff: {std_diff:.2f}'
-
+        annotation_text += f'<br>Std Diff: {std_diff:.2f}'
+    
     # Define the base title text with session information if available
     base_title = 'est_H and decode_H Values Over Laps'
     if session_idx is not None and session is not None:
@@ -1426,7 +1496,7 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
             base_title += f', Tag {tag}'
     elif tag is not None:
         base_title += f'<br>Tag: {tag}'
-
+    
     # Create layout with title as a dictionary and annotations
     layout = go.Layout(
         title={'text': base_title},  # Set the title text correctly as a dictionary
@@ -1448,9 +1518,9 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
             )
         ]
     )
-
+    
     fig = go.Figure(data=data, layout=layout)
-
+    
     # Save or show the plot
     if save_path:
         # Construct the directory path
@@ -1459,11 +1529,11 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, se
             dir_components.append(f'session_{session_idx}')
         dir_path = os.path.join(*dir_components)
         os.makedirs(dir_path, exist_ok=True)
-
+    
         # Construct the filename
         filename = f"h_over_laps_{tag}.html" if tag else "h_over_laps.html"
         full_path = os.path.join(dir_path, filename)
-
+    
         # Save the plot as an HTML file
         plot(fig, filename=full_path, auto_open=False)
         print(f"Saved interactive plot to {full_path}")
@@ -1496,7 +1566,6 @@ def plot_decoded_var_and_true_interactive(decoded_var=None, behav_var=None, true
     - save_path (str, optional): Directory path to save the plot.
     - session_idx (int, optional): Session index for labeling purposes.
     - behav_var_name (str, optional): Name of the behavioral variable for labeling and filename.
-
     Returns:
     - None
     """
@@ -1568,15 +1637,15 @@ def plot_decoded_var_and_true_interactive(decoded_var=None, behav_var=None, true
     
     # Save the plot if save_path is provided
     if save_path:
-        full_save_path = os.path.join(save_path, f'session_{session_idx}' if session_idx is not None else '')
+        full_save_path = os.path.join(save_path)
         os.makedirs(full_save_path, exist_ok=True)
         
-        filename = f"SI_{behav_var_name}.html" if behav_var_name else "decoded_and_behavioral_variables.html"
+        filename = f"SI_{behav_var_name}.html"
         file_path = os.path.join(full_save_path, filename)
         
         plot(fig, filename=file_path, auto_open=False)
         print(f"Interactive plot saved to {file_path}")
-    
+
     # Display the plot
     fig.show()
 
@@ -1743,17 +1812,14 @@ def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=
     else:
         plt.show()
 
-def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_name=None,save_dir=None,session_idx=None):
+def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_name=None,save_dir=None,session_idx=None,dimensions_3=False):
 
     """ 
     params: 
 
     n_bins: integer (default: 10)
         number of bin-groups the label will be divided into (they will 
-        become nodes on the graph). For vectorial features, if one wants 
-        different number of bins for each entry then specify n_bins as a 
-        list (i.e. [10,20,5]). Note that it will be ignored if 
-        'discrete_label' is set to True.
+        become nodes on the graph)
 
     n_neighbors: int (default: 15)
         Number of neighbors used to compute the overlapping between 
@@ -1762,8 +1828,7 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
 
     discrete_label: boolean (default: False)
         If the label is discrete, then one bin-group will be created for 
-        each discrete value it takes. Note that if set to True, 'n_bins' 
-        parameter will be ignored.
+        each discrete value it takes. 
 
     num_shuffles: int (default: 100)
         Number of shuffles to be computed. Note it must fall within the 
@@ -1778,23 +1843,23 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
 
     print(f"SI  is: {SI}")
 
-    #draw_graph(overlap_mat, ax)
-
-    # Create the figure and subplots
+    # Create figure and subplots
     fig, ax = plt.subplots(1, 3, figsize=(18, 5))
 
     # Plot 3D scatter
-    at = fig.add_subplot(1, 3, 1, projection='3d')
-    scatter = at.scatter(*embeddings.T, c=behav_var, cmap='inferno_r', vmin=0, vmax=1)
-    cbar = fig.colorbar(scatter, ax=at, anchor=(0, 0.3), shrink=0.8, ticks=[0, 0.5, 1])
-    cbar.set_label('radius', rotation=90)
-    at.set_title(f'Embeddings with {behav_var_name} feature', size=16)
-    at.set_xlabel('Dim 1', labelpad=-8, size=14)
-    at.set_ylabel('Dim 2', labelpad=-8, size=14)
-    at.set_zlabel('Dim 3', labelpad=-8, size=14)
-    at.set_xticks([])
-    at.set_yticks([])
-    at.set_zticks([])
+    if dimensions_3 == True:
+        at = fig.add_subplot(1, 3, 1, projection='3d')
+        scatter = at.scatter(*embeddings.T, c=behav_var, cmap='inferno_r', vmin=0, vmax=1)
+        cbar = fig.colorbar(scatter, ax=at, anchor=(0, 0.3), shrink=0.8, ticks=[0, 0.5, 1])
+        cbar.set_label('radius', rotation=90)
+        at.set_title(f'Embeddings with {behav_var_name} feature', size=16)
+        at.set_xlabel('Dim 1', labelpad=-8, size=14)
+        at.set_ylabel('Dim 2', labelpad=-8, size=14)
+        at.set_zlabel('Dim 3', labelpad=-8, size=14)
+        at.set_xticks([])
+        at.set_yticks([])
+        at.set_zticks([])
+    
 
     # Plot adjacency matrix
     matshow = ax[1].matshow(overlap_mat, vmin=0, vmax=0.5, cmap=plt.cm.viridis)
@@ -1815,7 +1880,7 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
             verticalalignment='bottom', transform=ax[2].transAxes, fontsize=25)
     
     filename = f"SI_{behav_var_name}.png"
-    full_save_path = os.path.join(save_dir, f'session_{session_idx}')
+    full_save_path = os.path.join(save_dir)
     os.makedirs(full_save_path,exist_ok=True)
 
     # Adjust layout and show the plot
@@ -1827,96 +1892,13 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
 
     return SI
 
-# def plot_decoded_var_and_true(tt, behav_var, 
-#                          x_start=0, x_end=0.05, 
-#                          xlabel='Parametrization (0 to 1)', 
-#                          ylabel1='tt', ylabel2='Behavioral Variable', 
-#                          title='tt and Behavioral Variable Plot', 
-#                          legend_labels=['tt', 'Behavioral Variable'],
-#                          save_path=None,
-#                          figsize=(12, 6),session_idx=None,behav_var_name=None):
-#     """
-#     Plots two arrays of different sizes on the same x-axis ranging from x_start to x_end.
-    
-#     Parameters:
-#     - tt (array-like): Array representing parametrization (e.g., time or parameter values).
-#     - behav_var (array-like): Array representing the behavioral variable of interest.
-#     - x_start (float): Starting value of the x-axis range. Default is 0.
-#     - x_end (float): Ending value of the x-axis range. Default is 2π.
-#     - xlabel (str): Label for the x-axis.
-#     - ylabel1 (str): Label for the first y-axis (tt).
-#     - ylabel2 (str): Label for the second y-axis (Behavioral Variable).
-#     - title (str): Title of the plot.
-#     - legend_labels (list of str): Labels for the legend entries.
-#     - save_path (str): If provided, the directory path where the plot will be saved.
-#     - figsize (tuple): Size of the figure in inches. Default is (12, 6).
-    
-#     Returns:
-#     - None
-#     """
-
-    
-#     # Convert inputs to numpy arrays for consistency
-#     decoded_var = np.array(decoded_var)
-#     behav_var = np.array(behav_var)
-    
-#     # Find the indices corresponding to the x_end value
-#     # Assuming `decoded_var` is scaled between 0 and 1 or already aligned with your x-axis
-#     end_index = np.searchsorted(decoded_var, x_end)
-    
-#     # Slice the data up to the end_index
-#     decoded_var = decoded_var[:end_index]
-#     behav_var = behav_var[:end_index]
-    
-#     # Normalize the x-axis indices for both arrays
-#     decoded_var_length = len(decoded_var)
-#     behav_length = len(behav_var)
-#     x_decoded_var = np.linspace(x_start, x_end, decoded_var_length)
-#     x_behav = np.linspace(x_start, x_end, behav_length)
-    
-#     # Create the plot
-#     plt.figure(figsize=figsize)
-    
-#     # Plot decoded_var
-#     plt.plot(x_decoded_var, decoded_var, label=legend_labels[0], linewidth=2)
-    
-#     # Plot behavioral variable
-#     plt.plot(x_behav, behav_var % (2*np.pi), label=legend_labels[1], linewidth=2)
-    
-#     # Customize the plot
-#     plt.xlabel(xlabel, fontsize=14)
-#     plt.ylabel('Value', fontsize=14)
-#     plt.title(title, fontsize=16)
-#     plt.legend(fontsize=12)
-#     plt.grid(True, linestyle='--', alpha=0.5)
-    
-#     # Set x-axis limits
-#     plt.xlim(x_start, x_end)
-    
-#     # Optionally save the plot
-#     if save_path:
-#         # Ensure the save directory exists
-#         filename = f"decoded_var_{behav_var_name}.png"
-#         full_save_path = os.path.join(save_path, f'session_{session_idx}')
-#         os.makedirs(full_save_path,exist_ok=True)
-
-#         # Adjust layout and show the plot
-#         plt.tight_layout()
-
-#         plt.savefig(os.path.join(full_save_path,filename), format='png', dpi=300, bbox_inches='tight')      
-
-#         print(f"Plot saved to {save_path}")
-    
-#     # Display the plot
-#     plt.show()
-
 def plot_decoded_var_and_true(decoded_var, behav_var, 
-                              indices=None,
-                              xlabel='Parametrization (0 to 1)', 
-                              ylabel1='Decoded Variable', 
-                              ylabel2='Behavioral Variable', 
-                              title='Decoded and Behavioral Variable Plot', 
-                              legend_labels=['Decoded Variable', 'Behavioral Variable'],
+                              indices=range(200),
+                              xlabel='Time (s)', 
+                              ylabel1='H Decoded from Manifold', 
+                              ylabel2='Ground Truth H', 
+                              title='H Decoded from Manifold vs Ground Truth H', 
+                              legend_labels=None,
                               save_path=None,
                               figsize=(12, 6),
                               session_idx=None,
@@ -1941,20 +1923,16 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
     Returns:
     - None
     """
-    # Set default number of points if indices not provided
-    n = 250
-    if indices is None:
-        indices = range(n)
+    indices = np.arange(0,len(decoded_var))
+
+    # Handle slice and ensure indices are iterable
+    if isinstance(indices, slice):
+        start, stop, step = indices.start or 0, indices.stop or len(decoded_var), indices.step or 1
+        indices = range(start, stop, step)
+    elif not hasattr(indices, '__iter__'):
+        raise TypeError("indices must be a slice or an iterable of integers")
     else:
-        # Validate indices
-        if isinstance(indices, slice):
-            # Convert slice to range
-            start, stop, step = indices.start or 0, indices.stop or len(decoded_var), indices.step or 1
-            indices = range(start, stop, step)
-        elif not hasattr(indices, '__iter__'):
-            raise TypeError("indices must be a slice or an iterable of integers")
-        else:
-            indices = list(indices)
+        indices = list(indices)
     
     # Ensure decoded_var and behav_var have the same length
     if len(decoded_var) != len(behav_var):
@@ -1967,19 +1945,25 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
     
     # Create the plot
     plt.figure(figsize=figsize)
-    plt.plot(x_values, decoded_subset, label=legend_labels[0], marker='o')
-    plt.plot(x_values, behav_subset, label=legend_labels[1], marker='x')
-    
+    ax = plt.gca()
+    ax.set_facecolor('white') 
+    if legend_labels is not None:
+        plt.plot(x_values, decoded_subset, label=legend_labels[0], color ='red',linestyle='-')
+        plt.plot(x_values, behav_subset, label=legend_labels[1], color='black', linestyle='-')
+    else:
+        plt.plot(x_values, decoded_subset, color ='red',linestyle='-')
+        plt.plot(x_values, behav_subset, color='black', linestyle='-')
+        
     # Set labels and title
     plt.xlabel(xlabel)
     plt.ylabel(ylabel1)
-    if behav_var_name:
-        plt.ylabel(ylabel1)  # Decoded variable label
-        plt.twinx().set_ylabel(behav_var_name)  # Behavioral variable label
     plt.title(title)
-    
-    # Add legend
-    plt.legend()
+
+    ax.grid(False)
+
+    # Add legend (ensures it only shows if labels are provided)
+    if legend_labels and len(legend_labels) == 2:
+        plt.legend(loc="best")  # Ensure the legend appears
     
     # Append session information to title if provided
     if session_idx is not None:
@@ -1991,126 +1975,58 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
     # Save the plot if save_path is provided
     if save_path:
         # Ensure the save directory exists
-        filename = f"decoded_var_{behav_var_name}.png"
-        full_save_path = os.path.join(save_path, f'session_{session_idx}')
-        os.makedirs(full_save_path,exist_ok=True)
-
-        # Adjust layout and show the plot
-        plt.tight_layout()
-
-        plt.savefig(os.path.join(full_save_path,filename), format='png', dpi=300, bbox_inches='tight')      
-
-        print(f"Plot saved to {full_save_path}")
+        filename = f"decoded_var_{behav_var_name}.png" if behav_var_name else "decoded_var_plot.png"
+        full_save_path = os.path.join(save_path)
+        os.makedirs(full_save_path, exist_ok=True)
+        
+        # Save the figure
+        plt.savefig(os.path.join(full_save_path, filename), format='png', dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {os.path.join(full_save_path, filename)}")
     
     # Display the plot
     plt.show()
 
-def get_H_over_lap(H=None, true_angle=None):
+def get_var_over_lap(var=None, true_angle=None):
     """
     Computes the lap number for each H value based on true_angle and returns the paired and sorted arrays.
     
     Parameters:
-    - H: array-like, shape (n,)
+    - var: array-like, shape (n,)
         Array representing the variable to plot over laps.
     - true_angle: array-like, shape (n,)
         Array representing angles in radians at each time point.
     
     Returns:
     - lap_number: numpy.ndarray, shape (n,)
-        Array representing the lap index for each H value.
-    - sorted_H: numpy.ndarray, shape (n,)
-        The H array reordered based on ascending lap_number.
+        Array representing the lap index for each var value.
+    - sorted_var: numpy.ndarray, shape (n,)
+        The var array reordered based on ascending lap_number.
     - sorted_lap_number: numpy.ndarray, shape (n,)
         The lap_number array sorted in ascending order.
     
     Raises:
-    - ValueError: If H and true_angle are not provided or have different lengths.
+    - ValueError: If var and true_angle are not provided or have different lengths.
     """
-    
-    H = np.asarray(H)
-    true_angle = np.asarray(true_angle)
 
-    min_length = min(len(H), len(true_angle))
+    #make same size
+    min_length = min(len(var), len(true_angle))
 
-    H = H[:min_length]
+    var = var[:min_length]
     true_angle = true_angle[:min_length]
     
-    if H.ndim != 1 or true_angle.ndim != 1:
+    if var.ndim != 1 or true_angle.ndim != 1:
         raise ValueError("Both H and true_angle must be 1-dimensional arrays.")
     
-    # Compute lap_number as true_angle divided by 360
+    # Compute lap_number as true_angle divided by 2pi
     lap_number = true_angle / (2*np.pi)
     
-    # Sort lap_number and reorder H accordingly
+    # Sort lap_number and reorder var accordingly (most likely already sorted)
     sorted_indices = np.argsort(lap_number)
     sorted_lap_number = lap_number[sorted_indices]
-    sorted_H = H[sorted_indices]
+    sorted_var = var[sorted_indices]
     
-    return lap_number, sorted_H, sorted_lap_number
+    return lap_number, sorted_var, sorted_lap_number
 
-
-# def plot_Hs_over_laps_scrollable_with_plotly(est_H=None, decode_H=None, lap_number=None, 
-#                                              session_idx=None, session=None, save_path=None, tag=None, window_size=None):
-#     """
-#     Plots two H values against lap numbers with interactivity using Plotly,
-#     and saves the plot as an HTML file.
-#     """
-
-#     # Input validation
-#     if est_H is None or decode_H is None or lap_number is None:
-#         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
-    
-#     # Ensure inputs are NumPy arrays
-#     est_H = np.asarray(est_H)
-#     decode_H = np.asarray(decode_H)
-#     lap_number = np.asarray(lap_number)
-
-#     # Trimming to the shortest length
-#     min_length = min(len(est_H), len(decode_H), len(lap_number))
-#     est_H = est_H[:min_length]
-#     decode_H = decode_H[:min_length]
-#     lap_number = lap_number[:min_length]
-    
-#     # Create interactive traces
-#     trace_est_H = go.Scatter(
-#         x=lap_number,
-#         y=est_H,
-#         mode='lines+markers',
-#         name='est_H',
-#         line=dict(color='blue'),
-#     )
-#     trace_decode_H = go.Scatter(
-#         x=lap_number,
-#         y=decode_H,
-#         mode='lines+markers',
-#         name='decode_H',
-#         line=dict(color='red'),
-#     )
-
-#     # Create layout
-#     layout = go.Layout(
-#         title="Interactive H Plot with Scrollable Laps",
-#         xaxis=dict(
-#             title="Lap Number",
-#             rangeslider=dict(visible=True),  # Add range slider for horizontal scrolling
-#         ),
-#         yaxis=dict(title="H Value"),
-#         legend=dict(orientation="h", x=0.5, y=-0.2, xanchor="center"),
-#     )
-
-#     fig = go.Figure(data=[trace_est_H, trace_decode_H], layout=layout)
-
-#     # Save or show the plot
-#     if save_path:
-#         # Ensure directory exists
-#         os.makedirs(save_path, exist_ok=True)
-#         # Save as HTML
-#         filename = f"session_{session_idx}/{save_path}/h_over_laps_interactive_{tag}.html" if tag else f"{save_path}/h_over_laps_interactive.html"
-#         plot(fig, filename=filename, auto_open=False)
-#         print(f"Saved interactive plot to {filename}")
-#     else:
-#         # Display the interactive plot in the browser
-#         plot(fig)
 
 def plot_and_save_behav_vars(binned_hipp_angle=None, binned_true_angle=None, binned_est_gain=None,
                              save_dir=None, session_idx=None):
@@ -2135,15 +2051,15 @@ def plot_and_save_behav_vars(binned_hipp_angle=None, binned_true_angle=None, bin
 
     # Define the filename and full save path
     filename = f"behav_vars.png"
-    full_save_path = os.path.join(save_dir, f'session_{session_idx}')
+    full_save_path = os.path.join(save_dir)
     
-    # Create the directory if it doesn't exist
+    # Create directory if doesn't exist
     os.makedirs(full_save_path, exist_ok=True)
     
-    # Create the figure and axis
+    # Create figure and axis
     fig, ax = plt.subplots(figsize=(12, 6))
     
-    # Define the x-axis as bin indices
+    # Define x-axis as bin indices
     length = 100
     x = np.arange(100)
     
@@ -2164,27 +2080,27 @@ def plot_and_save_behav_vars(binned_hipp_angle=None, binned_true_angle=None, bin
   
     plt.tight_layout()
     
-    # Save the figure
+    # Save figure
     save_path = os.path.join(full_save_path, filename)
     fig.savefig(save_path, format='png', dpi=300, bbox_inches='tight')
     print(f"Plot saved to {save_path}")
     
     plt.close(fig)
 
-def low_pass_filter(angles=None, cutoff_frequency=0.1, filter_order=3):
+def low_pass_filter(angles=None, cutoff_frequency=0.1, filter_order=3,fs=1):
     """
-    Apply a low-pass Butterworth filter to smooth the `decoded_angles` array.
+    Apply a low-pass Butterworth filter to smooth the passed array
 
     Parameters:
-    - decoded_angles (np.array): The 1D array of angles sampled at 1 Hz.
+    - angles (np.array): The 1D array of angles sampled at 1 Hz.
     - cutoff_frequency (float): The cutoff frequency for the low-pass filter (default: 0.1 Hz).
     - filter_order (int): The order of the Butterworth filter (default: 3).
+    -fs: sample rate of angles (default: 1)
 
     Returns:
     - np.array: The smoothed array.
     """
-    # Sampling frequency
-    fs = 1  # Hz
+    
     
     # Normalize cutoff frequency with respect to Nyquist frequency (fs/2)
     nyquist = 0.5 * fs
@@ -2212,6 +2128,110 @@ def compute_moving_average(data=None, window_size=None):
     
     kernel = np.ones(window_size) / window_size
     return np.convolve(data, kernel, mode='valid')
+
+def save_data_to_csv(data_dict, save_dir,list=False):
+    """
+    Saves the provided data dictionary into a CSV file within a session-specific folder.
+
+    Parameters:
+    - data_dict (dict): Dictionary containing all the data to save.
+    - save_dir (str): Base directory where session folders are located.
+    """
+    if(list):
+        df = pd.DataFrame(data_dict)
+        csv_file = os.path.join(save_dir, "total")
+    else:
+        df = pd.DataFrame([data_dict])
+        csv_file = os.path.join(save_dir, f"session_{data_dict.get('session_idx', 'unknown')}")
+
+    df = df.round(2)
+
+
+    os.makedirs(csv_file, exist_ok=True)
+
+    # Define CSV file path
+    csv_file = os.path.join(csv_file, "results.csv")
+
+    # Save to CSV
+    df.to_csv(csv_file, index=False)
+
+    print(f"Data saved to {csv_file}")
+
+def plot_scatter(data, x_key, y_key, x_label, y_label, title):
+    """
+    Plots a scatter plot for the given keys in the data.
+    
+    Parameters:
+        data (list of dict): The dictionary list containing the data.
+        x_key (str): The key for the x-axis variable.
+        y_key (str): The key for the y-axis variable.
+        x_label (str): The label for the x-axis.
+        y_label (str): The label for the y-axis.
+        title (str): The title of the scatter plot.
+    """
+    # Extract the data for plotting
+    x_values = [trial[x_key] for trial in data]
+    y_values = [trial[y_key] for trial in data]
+    
+    # Create the scatter plot
+    plt.figure(figsize=(8, 6))
+    plt.scatter(x_values, y_values, alpha=0.7, edgecolors='k')
+    plt.title(title)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.grid(True)
+    plt.show()
+
+def plot_spatial_spectrogram(H=None,lap_numbers=None,save_path=None,behav_var_name=None):
+    
+    lap_numbers=lap_numbers[:400]
+    H=H[:400]
+
+    # Check if lap_numbers are evenly spaced
+    differences = np.diff(lap_numbers)
+    if not np.allclose(differences, differences[0], atol=1e-6):
+        # Resample H to evenly spaced laps
+        num_samples = len(lap_numbers)
+        lap_numbers_uniform = np.linspace(lap_numbers.min(), lap_numbers.max(), num_samples)
+        interp_func = interp1d(lap_numbers, H, kind='linear')
+        H_uniform = interp_func(lap_numbers_uniform)
+        lap_numbers = lap_numbers_uniform
+        H = H_uniform
+
+
+    dx = lap_numbers[1] - lap_numbers[0]  # interval between samples
+    fs = 1 / dx  #sampling frequency
+
+
+    nperseg = 256  # Number of samples per segment
+    noverlap = nperseg // 2  # Overlap between segments
+
+    frequencies, positions, Sxx = signal.spectrogram(
+        H,
+        fs=fs,
+        window='hann',
+        nperseg=nperseg,
+        noverlap=noverlap,
+        scaling='density',
+        mode='magnitude'
+    )
+
+
+    plt.figure(figsize=(12, 6))
+    # Convert positions back to lap numbers
+    plt.pcolormesh(positions, frequencies, Sxx, shading='gouraud', cmap='viridis')
+    plt.title('Spatial Spectrogram of H over Lap Numbers')
+    plt.ylabel('Spatial Frequency [cycles per lap]')
+    plt.xlabel('Lap Number')
+    plt.colorbar(label='Intensity')
+    plt.tight_layout()
+    plt.show()
+
+    file_path = os.path.join(save_path,behav_var_name)
+
+    plt.savefig(file_path)
+
+    plt.close()
 
 
 

@@ -198,11 +198,6 @@ class PiecewiseLinearFit:
                 density_penalty = fit_params['density_coeff'] * np.sum(-log_density_knots)
                 if(verbose):
                     print(f"density penalty is: {density_penalty}")
-                # Regularization to keep knots near data clusters
-                # neighbgraph_knots = NearestNeighbors(n_neighbors=1).fit(self.data_to_fit)
-                # knot_dists, _ = neighbgraph_knots.kneighbors(knots)
-                # regularization = fit_params.get('knot_reg_coeff', 1.0) * np.sum(knot_dists) / self.nKnots
-                # Total cost with penalties
                 cost += curvature_penalty + length_penalty + density_penalty
                 return cost
             else:
@@ -230,113 +225,6 @@ class PiecewiseLinearFit:
         self.saved_knots.append(save_dict)
 
 
-    # def fit_data(self, fit_params):
-    #     '''Main function to fit the data. Starting from the initial knots
-    #     move them to minimize the distance of points to the curve, along with
-    #     some (optional) penalty.'''
-
-    #     save_dict = {'fit_params': fit_params}
-
-    #     # def cost_fn(flat_knots, penalty_params = fit_params):
-    #     #     knots = np.reshape(flat_knots.copy(), (self.nKnots, self.nDims))
-    #     #     loop_knots = fhf.loop_knots(np.reshape(flat_knots.copy(), (self.nKnots, self.nDims)))
-    #     #     fit_curve = loop_knots[self.t_int_idx] + (loop_knots[self.t_int_idx + 1] -
-    #     #                                     loop_knots[self.t_int_idx]) * self.t_rsc[:, np.newaxis]
-    #     #     neighbgraph = NearestNeighbors(n_neighbors=1).fit(fit_curve)
-    #     #     dists, inds = neighbgraph.kneighbors(self.data_to_fit)
-
-
-    #     #     delta = penalty_params.get('delta', 0.01)  # Threshold for Huber loss
-    
-    #     #     # Define a distance threshold based on the data
-    #     #     dist_threshold = np.percentile(dists, 50)
-            
-    #     #     # Filter distances to include only those less than or equal to the threshold
-    #     #     valid_indices = np.where(dists <= dist_threshold)[0]
-    #     #     #print(f"dists mean: {np.mean(dists)}")
-    #     #     filtered_dists = dists[valid_indices]
-    #     #     #print(f"dists_filtered mean: {np.mean(filtered_dists)}")
-            
-    #     #     if penalty_params['penalty_type'] == 'none':
-    #     #         cost = np.sum(filtered_dists)
-    #     #     elif penalty_params['penalty_type'] == 'mult_len':
-    #     #         cost = np.sum(dists) * self.tot_len(loop_knots)
-    #     #     elif penalty_params['penalty_type'] == 'add_len': 
-    #     #         cost = np.mean(dists) + penalty_params['len_coeff'] * self.tot_len(loop_knots)
-    #     #     elif penalty_params['penalty_type'] == 'curvature':
-    #     #         print("Applying Curvature Cost function")
-    #     #         curvature_penalty = penalty_params['curvature_coeff'] * self.compute_curvature(loop_knots)
-    #     #         length_penalty = penalty_params['len_coeff'] * self.tot_len(loop_knots)
-                
-    #     #         # density-based penalty
-    #     #         kde = KernelDensity(kernel='gaussian', bandwidth=2.0).fit(self.data_to_fit)
-    #     #         log_density = kde.score_samples(knots)
-    #     #         density = np.exp(log_density)
-    #     #         print(f"density_coeff: {penalty_params['density_coeff']}")
-    #     #         density_penalty = penalty_params['density_coeff'] * np.sum(-np.log(density + 1e-6))
-    #     #         density_penalty = (density_penalty / self.nKnots)
-    #     #         curvature_penalty = (curvature_penalty / self.nKnots)
-    #     #         length_penalty = (length_penalty / self.nKnots)
-    #     #         cost = np.sum(self.huber_loss(filtered_dists,delta)) + curvature_penalty + length_penalty + density_penalty
-    #     #     else:
-    #     #         raise ValueError(f"Unknown penalty type: {penalty_params['penalty_type']}")
-    #     #     return cost
-    #     def tukey_biweight_loss(r, c=4.685):
-    #         mask = np.abs(r) <= c
-    #         loss = np.zeros_like(r)
-    #         r_squared = r[mask] ** 2
-    #         c_squared = c ** 2
-    #         loss[mask] = c_squared / 6 * (1 - (1 - (r_squared / c_squared)) ** 3)
-    #         loss[~mask] = c_squared / 6
-    #         return loss
-
-
-    #     def cost_fn(flat_knots, penalty_params=fit_params):
-    #         knots = np.reshape(flat_knots.copy(), (self.nKnots, self.nDims))
-    #         loop_knots = fhf.loop_knots(knots)
-    #         fit_curve = loop_knots[self.t_int_idx] + (loop_knots[self.t_int_idx + 1] - loop_knots[self.t_int_idx]) * self.t_rsc[:, np.newaxis]
-    #         neighbgraph = NearestNeighbors(n_neighbors=1).fit(fit_curve)
-    #         dists, inds = neighbgraph.kneighbors(self.data_to_fit)
-            
-    #         # Compute data density
-    #         kde = KernelDensity(kernel='gaussian', bandwidth=2.0).fit(self.data_to_fit)
-    #         log_density_data = kde.score_samples(self.data_to_fit)
-    #         density_data = np.exp(log_density_data)
-    #         weights = density_data / np.sum(density_data)
-            
-    #         # Compute weighted distances using Tukey's biweight loss
-    #         weighted_dists = dists.flatten() * weights[inds.flatten()]
-    #         cost = np.sum(tukey_biweight_loss(weighted_dists))
-            
-    #         # Penalty terms
-    #         curvature_penalty = penalty_params['curvature_coeff'] * self.compute_curvature(loop_knots) / self.nKnots
-    #         length_penalty = penalty_params['len_coeff'] * self.tot_len(loop_knots) / self.nKnots
-    #         log_density_knots = kde.score_samples(knots)
-    #         density_penalty = penalty_params['density_coeff'] * np.sum(-log_density_knots) / self.nKnots
-            
-    #         # Regularization to keep knots near data clusters
-    #         neighbgraph_knots = NearestNeighbors(n_neighbors=1).fit(self.data_to_fit)
-    #         knot_dists, _ = neighbgraph_knots.kneighbors(knots)
-    #         regularization = penalty_params.get('knot_reg_coeff', 1.0) * np.sum(knot_dists) / self.nKnots
-            
-    #         # Total cost
-    #         cost += curvature_penalty + length_penalty + density_penalty + regularization
-    #         return cost
-
-        
-    #     init_knots = fit_params['init_knots']
-    #     flat_init_knots = init_knots.flatten()
-    #     # fit_result = minimize(cost_fn, flat_init_knots, method='Nelder-Mead',
-    #     #                       options={'maxiter': 3000})
-    #     from scipy.optimize import differential_evolution
-
-    #     bounds = [(-np.inf, np.inf)] * len(flat_init_knots)
-    #     fit_result = differential_evolution(cost_fn, bounds, args=(fit_params,), maxiter=1000, strategy='best1bin', disp=True)
-    #     # print fit_result.fun
-    #     knots = np.reshape(fit_result.x.copy(), (self.nKnots, self.nDims))
-    #     save_dict = {'knots' : knots, 'err' : fit_result.fun,
-    #         'init_knots' : init_knots}
-    #     self.saved_knots.append(save_dict)
 
     # Various utility functions
     def global_to_local_coords(self):
