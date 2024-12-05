@@ -51,6 +51,9 @@ from scipy.ndimage import gaussian_filter
 from scipy.signal import savgol_filter
 from scipy import signal
 from scipy.interpolate import interp1d
+from scipy.io import savemat
+from matplotlib.backends.backend_pdf import PdfPages
+
 
 def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, behav_angles=None,true_angles=None):
     """
@@ -220,63 +223,63 @@ def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
     # Compute the pairwise distance matrix
     distances = distance_matrix(data, data)
     np.fill_diagonal(distances, 10)
-    print("Pairwise distance matrix computed.")
-    print(f"Distance matrix shape: {distances.shape}")
-    print(f"Sample distances (first 5 rows, first 5 columns):\n{distances[:5, :5]}\n")
+    # print("Pairwise distance matrix computed.")
+    # print(f"Distance matrix shape: {distances.shape}")
+    # print(f"Sample distances (first 5 rows, first 5 columns):\n{distances[:5, :5]}\n")
     
     # Determine the neighborhood radius for each point based on the pct_distance percentile of distances
     neighborhood_radius = np.percentile(distances, pct_distance, axis=0)
-    print(f"Neighborhood radius calculated using the {pct_distance}th percentile.")
-    print(f"Neighborhood radius statistics:")
-    print(f"  Min: {neighborhood_radius.min()}")
-    print(f"  Max: {neighborhood_radius.max()}")
-    print(f"  Mean: {neighborhood_radius.mean():.4f}")
-    print(f"  Median: {np.median(neighborhood_radius):.4f}\n")
+    # print(f"Neighborhood radius calculated using the {pct_distance}th percentile.")
+    # print(f"Neighborhood radius statistics:")
+    # print(f"  Min: {neighborhood_radius.min()}")
+    # print(f"  Max: {neighborhood_radius.max()}")
+    # print(f"  Mean: {neighborhood_radius.mean():.4f}")
+    # print(f"  Median: {np.median(neighborhood_radius):.4f}\n")
     
     # Count the number of neighbors for each point within the neighborhood radius
     neighbor_counts = np.sum(distances <= neighborhood_radius[:, None], axis=1)
-    print("Neighbor counts computed for each point.")
-    print(f"Neighbor counts statistics:")
-    print(f"  Min: {neighbor_counts.min()}")
-    print(f"  Max: {neighbor_counts.max()}")
-    print(f"  Mean: {neighbor_counts.mean():.2f}")
-    print(f"  Median: {np.median(neighbor_counts)}")
-    print(f"  Example neighbor counts (first 10 points): {neighbor_counts[:50]}\n")
+    # print("Neighbor counts computed for each point.")
+    # print(f"Neighbor counts statistics:")
+    # print(f"  Min: {neighbor_counts.min()}")
+    # print(f"  Max: {neighbor_counts.max()}")
+    # print(f"  Mean: {neighbor_counts.mean():.2f}")
+    # print(f"  Median: {np.median(neighbor_counts)}")
+    # print(f"  Example neighbor counts (first 10 points): {neighbor_counts[:50]}\n")
     
     # Identify points with a neighbor count below the pct_neighbors percentile
     threshold_neighbors = np.percentile(neighbor_counts, pct_neighbors)
-    print(f"Threshold for neighbor counts set at the {pct_neighbors}th percentile: {threshold_neighbors}")
+    # print(f"Threshold for neighbor counts set at the {pct_neighbors}th percentile: {threshold_neighbors}")
     
     outlier_indices = np.where(neighbor_counts < threshold_neighbors)[0]
-    print(f"Outliers based on neighbor counts (count={len(outlier_indices)}): {outlier_indices}\n")
+    # print(f"Outliers based on neighbor counts (count={len(outlier_indices)}): {outlier_indices}\n")
     
     # consider points as outliers if they are too far from any other points
     neighbgraph = NearestNeighbors(n_neighbors=5).fit(distances)
     dists, inds = neighbgraph.kneighbors(distances)
     min_distance_to_any_point = np.mean(dists, axis=1)
-    print("Minimum distance to any other point calculated for each point.")
+    # print("Minimum distance to any other point calculated for each point.")
 
 
-    print(f"Minimum distance statistics:")
-    print(f"  Min: {min_distance_to_any_point.min()}")
-    print(f"  Max: {min_distance_to_any_point.max()}")
-    print(f"  Mean: {min_distance_to_any_point.mean():.4f}")
-    print(f"  Median: {np.median(min_distance_to_any_point):.4f}\n")
+    # print(f"Minimum distance statistics:")
+    # print(f"  Min: {min_distance_to_any_point.min()}")
+    # print(f"  Max: {min_distance_to_any_point.max()}")
+    # print(f"  Mean: {min_distance_to_any_point.mean():.4f}")
+    # print(f"  Median: {np.median(min_distance_to_any_point):.4f}\n")
     
     distance_threshold = np.percentile(min_distance_to_any_point, pct_dist)
-    print(f"Distance threshold set at the {pct_dist}th percentile: {distance_threshold}")
+    # print(f"Distance threshold set at the {pct_dist}th percentile: {distance_threshold}")
     
     far_outliers = np.where(min_distance_to_any_point > distance_threshold)[0]
-    print(f"Outliers based on distance threshold (count={len(far_outliers)}): {far_outliers}\n")
+    # print(f"Outliers based on distance threshold (count={len(far_outliers)}): {far_outliers}\n")
     
     # Combine with other outliers
     outlier_indices = np.unique(np.concatenate([outlier_indices, far_outliers]))
-    print(f"Total outliers detected after combining criteria (count={len(outlier_indices)}): {outlier_indices}\n")
+    # print(f"Total outliers detected after combining criteria (count={len(outlier_indices)}): {outlier_indices}\n")
     
     # Compute inlier indices as all indices not in outlier_indices
     all_indices = np.arange(data.shape[0])
     inlier_indices = np.setdiff1d(all_indices, outlier_indices)
-    print(f"Total inliers detected (count={len(inlier_indices)}): {inlier_indices}\n")
+    # print(f"Total inliers detected (count={len(inlier_indices)}): {inlier_indices}\n")
     
     # # Remove outliers from the data
     # cleaned_data = np.delete(data, outlier_indices, axis=0)
@@ -490,7 +493,7 @@ def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
 
 def plot_in_3d_static(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, 
                           save_path=None, principal_curve=None, tt=None, num_labels=10, 
-                          mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None):
+                          mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None,pdf=None):
     """
     Plots a static 3D plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline and saves the plot.
@@ -557,6 +560,8 @@ def plot_in_3d_static(embeddings_3d=None, session=None, behav_var=None, name_beh
         plt.savefig(f"{save_path}_{name_behav_var}_static_princ", dpi=300, bbox_inches='tight')
     elif save_path and principal_curve is None:
         plt.savefig(f"{save_path}_{name_behav_var}_static_no_princ", dpi=300, bbox_inches='tight')
+    
+    pdf.savefig()
 
     
 
@@ -989,7 +994,7 @@ def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,t
     return np.array(H_list)
 
 def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=None, session_idx=None, 
-           session=None, save_path=None, tag=None, is_moving_avg=False, SI_score=None, decode_err=None):
+           session=None, save_path=None, tag=None, is_moving_avg=False, SI_score=None, decode_err=None, pdf=None):
     """
     Plots estimated hippocampal gain (est_H) against decoded gain (decode_H).
     Optionally, if moving averaged data and behavioral variables are provided, it plots them with color mapping.
@@ -1006,11 +1011,11 @@ def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=
     - is_moving_avg (bool, optional): Indicates if the data provided are moving averaged.
     - SI_score (float, optional): SI score to display on the plot.
     - decode_err (float, optional): Decode error to display on the plot.
+    - pdf (PdfPages, optional): PdfPages object to save the plot in a PDF.
 
     Returns:
     - None
     """
-    
     # Validate input arrays
     if est_H is None or decode_H is None:
         raise ValueError("est_H and decode_H must both be provided.")
@@ -1031,139 +1036,77 @@ def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=
     if behav_var is not None:
         behav_var_trimmed = behav_var[:min_length]
     
-    # Handle moving average adjustments if needed
-    if is_moving_avg and behav_var is not None:
-        # Assuming moving average was computed with 'valid' mode
-        # The trimmed arrays are already moving averaged, so times should be adjusted
-        # This requires the window_size to have been considered during averaging
-        # For simplicity, we'll assume the user has adjusted the times accordingly
-        pass  # No action needed; user is responsible for providing correct times
-    
     # Calculate the overall averages of the data
     avg_est_gain = np.mean(est_gain_trimmed)
     avg_decode_gain = np.mean(decode_gain_trimmed)
-    if behav_var is not None:
-        avg_behav_var = np.mean(behav_var_trimmed)
-    
+    avg_behav_var = np.mean(behav_var_trimmed) if behav_var is not None else None
+
     # Create the plot
     fig, ax = plt.subplots(figsize=(12, 6))
     
     if behav_var is not None:
         # Normalize the behavioral variable for color mapping
         norm = mcolors.Normalize(vmin=np.min(behav_var_trimmed), vmax=np.max(behav_var_trimmed))
-        cmap = plt.get_cmap('viridis')  # Choose a suitable colormap
-        
-        # Create a ScalarMappable for the colorbar
+        cmap = plt.get_cmap('viridis')
         sm = ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])  # Only needed for older versions of matplotlib
-        
-        # Create LineCollection for est_H
-        points_est = np.array([times, est_gain_trimmed]).T.reshape(-1, 1, 2)
-        segments_est = np.concatenate([points_est[:-1], points_est[1:]], axis=1)
-        lc_est = LineCollection(segments_est, colors=cmap(norm(behav_var_trimmed[:-1])), linewidths=2, label='Estimated Gain')
-        
-        # Create LineCollection for decode_H
-        points_decode = np.array([times, decode_gain_trimmed]).T.reshape(-1, 1, 2)
-        segments_decode = np.concatenate([points_decode[:-1], points_decode[1:]], axis=1)
-        lc_decode = LineCollection(segments_decode, colors=cmap(norm(behav_var_trimmed[:-1])), linewidths=2, label='Decoded Gain', alpha=0.7)
-        
-        # Add LineCollections to the Axes
-        ax.add_collection(lc_est)
-        ax.add_collection(lc_decode)
-        
-        # Add the colorbar to the figure
+        sm.set_array([])  # Required for older matplotlib versions
+
+        # Plot colored lines for est_H and decode_H
+        ax.scatter(times, est_gain_trimmed, c=behav_var_trimmed, cmap=cmap, label='Estimated Gain', alpha=0.7)
+        ax.scatter(times, decode_gain_trimmed, c=behav_var_trimmed, cmap=cmap, label='Decoded Gain', marker='x', alpha=0.7)
         cbar = fig.colorbar(sm, ax=ax)
-        cbar.set_label(f'{behav_var_name}', fontsize=12)
+        cbar.set_label(behav_var_name)
     else:
-        # Plot without behavioral variable coloring
+        # Plot without color mapping
         ax.plot(times, est_gain_trimmed, label='Estimated Gain', color='blue')
         ax.plot(times, decode_gain_trimmed, label='Decoded Gain', color='red', alpha=0.7)
     
-    # Add dummy plot lines for the legend if using LineCollection
-    if behav_var is not None:
-        ax.plot([], [], color='blue', label='Estimated Gain')
-        ax.plot([], [], color='red', alpha=0.7, label='Decoded Gain')
-    
-    # Prepare the text for average values
+    # Add information text
     avg_text = (
-        f'Overall Avg Estimated Gain: {avg_est_gain:.2f}\n'
-        f'Overall Avg Decoded Gain: {avg_decode_gain:.2f}\n'
+        f"Avg Estimated Gain: {avg_est_gain:.2f}\n"
+        f"Avg Decoded Gain: {avg_decode_gain:.2f}\n"
     )
     if behav_var is not None:
-        avg_text += f'Overall Avg Behavioral Var: {avg_behav_var:.2f}\n'
+        avg_text += f"Avg {behav_var_name}: {avg_behav_var:.2f}\n"
     if SI_score is not None:
-        avg_text += f'SI Score: {SI_score:.2f}\n'
+        avg_text += f"SI Score: {SI_score:.2f}\n"
     if decode_err is not None:
-        avg_text += f'Avg Decode Err: {decode_err:.2f}'
+        avg_text += f"Decode Error: {decode_err:.2f}\n"
     
-    # Add text annotation in the top-left corner
-    ax.text(
-        0.05, 0.95, avg_text, transform=ax.transAxes, fontsize=12,
-        verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5)
-    )
+    ax.text(0.02, 0.98, avg_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7))
     
-    # Setting labels and title
-    ax.set_xlabel('Time (s)', fontsize=14)
-    ax.set_ylabel('Gain', fontsize=14)
-    
-    title = 'FT Gain vs Spline Decoded Gain'
+    # Labels, legend, and title
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('Gain')
+    title = 'Estimated vs Decoded Gain'
     if is_moving_avg:
-        title += ' (Moving Averages)'
-    if behav_var is not None:
-        title += f' Colored by {behav_var_name}'
-    
-    # Adding session information to the title if available
+        title += ' (Moving Average)'
+    if tag:
+        title += f' - {tag}'
     if session_idx is not None and session is not None:
-        # Ensure that session has attributes 'rat', 'day', and 'epoch'
-        rat = getattr(session, 'rat', 'Unknown Rat')
-        day = getattr(session, 'day', 'Unknown Day')
-        epoch = getattr(session, 'epoch', 'Unknown Epoch')
-        title += f'\nSession {session_idx}: Rat {rat}, Day {day}, Epoch {epoch}'
-    
-    # Include the tag in the title if provided
-    if tag is not None:
-        title += f', Tag: {tag}'
-    
-    ax.set_title(title, fontsize=16)
+        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+    ax.set_title(title)
     ax.legend()
-    ax.grid(True, linestyle='--', alpha=0.5)
-    fig.tight_layout()
-    
-    # Set the limits based on the data
-    ax.set_xlim(times.min(), times.max())
-    ax.set_ylim(
-        min(np.min(est_gain_trimmed), np.min(decode_gain_trimmed)) - 0.1, 
-        max(np.max(est_gain_trimmed), np.max(decode_gain_trimmed)) + 0.1
-    )
-    
-    # Save or show the plot
+    ax.grid(alpha=0.3)
+
+    # Save the plot if save_path is provided
     if save_path:
-        if session_idx is not None:
-            # Define the directory structure
-            save_dir = os.path.join(save_path, 'h_plots', f'session_{session_idx}')
-        else:
-            save_dir = os.path.join(save_path, 'h_plots')
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Define the filename with tag if provided
-        filename = f"h_est_vs_decode"
-        if is_moving_avg:
-            filename += "_ma"
-        if tag:
-            filename += f"_{tag}"
-        filename += ".png"
-        
-        full_save_path = os.path.join(save_dir, filename)
-        
-        # Save the figure
+        os.makedirs(save_path, exist_ok=True)
+        filename = f"{behav_var_name or 'gain_plot'}_{tag or ''}_session_{session_idx}.png"
+        full_save_path = os.path.join(save_path, filename)
         fig.savefig(full_save_path, dpi=300)
-        plt.close(fig)  # Close the figure to free memory
         print(f"Saved plot to {full_save_path}")
-    else:
-        plt.show()
+    
+    # Save to PDF if pdf is provided
+    if pdf is not None:
+        pdf.savefig(fig)
+
+    plt.close(fig)  # Close the figure to free memory
+
 
 def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
-                      save_path=None, tag=None, SI_score=None, decode_err=None):
+                      save_path=None, tag=None, SI_score=None, decode_err=None,pdf=None):
     """
     Plots two H values against lap numbers, optionally annotating with session information and saving the plot.
     
@@ -1258,6 +1201,7 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
         full_path = os.path.join(dir_path, filename)
         
         plt.savefig(full_path, dpi=300)
+        pdf.savefig()
         plt.close()
         
         print(f"Saved plot to {full_path}")
@@ -1265,136 +1209,9 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
         plt.show()
 
 
-# def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
-#                                   save_path=None, tag=None, SI_score=None, decode_err=None,mean_diff=None,std_diff=None):
-#     """
-#     Plots two H values against lap numbers using Plotly for interactivity.
-
-#     Parameters:
-#     - est_H (np.ndarray): Array of the first H values to plot.
-#     - decode_H (np.ndarray): Array of the second H values to plot.
-#     - lap_number (np.ndarray): Array of lap numbers corresponding to each H value.
-#     - session_idx (int, optional): Session index for labeling purposes.
-#     - session (object, optional): Session object containing metadata.
-#     - save_path (str, optional): Directory path to save the plot HTML file.
-#     - tag (str, optional): Tag to include in the saved plot's filename.
-#     - SI_score (float, optional): Score to annotate on the plot.
-#     - decode_err (float, optional): Decoding error to annotate on the plot.
-
-#     Returns:
-#     - None
-#     """
-    
-#     # Input validation
-#     if est_H is None or decode_H is None or lap_number is None:
-#         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
-    
-#     est_H = np.asarray(est_H)
-#     decode_H = np.asarray(decode_H)
-#     lap_number = np.asarray(lap_number)
-    
-#     if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1:
-#         raise ValueError("est_H, decode_H, and lap_number must all be 1-dimensional arrays.")
-    
-#     # Find the overlapping range of indices
-#     min_length = min(len(est_H), len(decode_H), len(lap_number))
-    
-#     # Trim est_H, decode_H, and lap_number to the overlapping range
-#     est_H_trimmed = est_H[:min_length]
-#     decode_H_trimmed = decode_H[:min_length]
-#     lap_trimmed = lap_number[:min_length]
-    
-#     # Compute average values for annotations
-#     avg_est_H = np.mean(est_H_trimmed)
-#     avg_decode_H = np.mean(decode_H_trimmed)
-
-#     # Create interactive plot
-#     trace_est_H = go.Scatter(
-#         x=lap_trimmed,
-#         y=est_H_trimmed,
-#         mode='lines+markers',
-#         name='est_H Value',
-#         line=dict(color='blue'),
-#         marker=dict(symbol='circle')
-#     )
-
-#     trace_decode_H = go.Scatter(
-#         x=lap_trimmed,
-#         y=decode_H_trimmed,
-#         mode='lines+markers',
-#         name='decode_H Value',
-#         line=dict(color='red', dash='dash'),
-#         marker=dict(symbol='x')
-#     )
-
-#     data = [trace_est_H, trace_decode_H]
-
-#     # Prepare annotation text
-#     annotation_text = f'Avg est_H: {avg_est_H:.2f}<br>Avg decode_H: {avg_decode_H:.2f}'
-#     if SI_score is not None:
-#         annotation_text += f'<br>SI Score: {SI_score:.2f}'
-#     if decode_err is not None:
-#         annotation_text += f'<br>Decode Error: {decode_err:.2f}'
-#     if mean_diff is not None:
-#         annotation_text += f'<br>mean_diff: {mean_diff:.2f}'
-#     if std_diff is not None:
-#         annotation_text += f'<br>std_diff: {std_diff:.2f}'
-
-#     # Define the base title text with session information if available
-#     base_title = 'est_H and decode_H Values Over Laps'
-#     if session_idx is not None and session is not None:
-#         base_title += f'<br>Session {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
-#         if tag is not None:
-#             base_title += f', Tag {tag}'
-#     elif tag is not None:
-#         base_title += f'<br>Tag: {tag}'
-
-#     # Create layout with title as a dictionary and annotations
-#     layout = go.Layout(
-#         title={'text': base_title},  # Set the title text correctly as a dictionary
-#         xaxis=dict(title='Lap Number'),
-#         yaxis=dict(title='H Value'),
-#         annotations=[
-#             dict(
-#                 xref='paper', yref='paper',
-#                 x=0.01, y=0.99,
-#                 xanchor='left', yanchor='top',
-#                 text=annotation_text,
-#                 showarrow=False,
-#                 font=dict(size=12),
-#                 bordercolor='black',
-#                 borderwidth=1,
-#                 borderpad=5,
-#                 bgcolor='white',
-#                 opacity=0.8
-#             )
-#         ]
-#     )
-
-#     fig = go.Figure(data=data, layout=layout)
-
-#     # Save or show the plot
-#     if save_path:
-#         # Construct the directory path
-#         dir_components = [save_path, 'h_plots_interactive']
-#         if session_idx is not None:
-#             dir_components.append(f'session_{session_idx}')
-#         dir_path = os.path.join(*dir_components)
-#         os.makedirs(dir_path, exist_ok=True)
-
-#         # Construct the filename
-#         filename = f"h_over_laps_{tag}.html" if tag else "h_over_laps.html"
-#         full_path = os.path.join(dir_path, filename)
-
-#         # Save the plot as an HTML file
-#         plot(fig, filename=full_path, auto_open=False)
-#         print(f"Saved interactive plot to {full_path}")
-#     else:
-#         # Display the plot in the default web browser
-#         plot(fig)
 
 def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, behav_var=None, session_idx=None, session=None, 
-                                  save_path=None, tag=None, SI_score=None, decode_err=None, mean_diff=None, std_diff=None,behav_var_name=None):
+                                  save_path=None, tag=None, SI_score=None, decode_err=None, mean_diff=None, std_diff=None,behav_var_name=None,pdf=None):
     """
     Plots two H values against lap numbers using Plotly for interactivity, with markers colored based on a behavioral variable.
 
@@ -1418,24 +1235,26 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, be
     # Input validation
     if est_H is None or decode_H is None or lap_number is None:
         raise ValueError("est_H, decode_H, and lap_number must all be provided.")
-    if behav_var is None:
-        raise ValueError("behav_var must be provided for color mapping.")
     
     est_H = np.asarray(est_H)
     decode_H = np.asarray(decode_H)
     lap_number = np.asarray(lap_number)
     behav_var = np.asarray(behav_var)
     
-    if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1 or behav_var.ndim !=1:
+    if est_H.ndim != 1 or decode_H.ndim != 1 or lap_number.ndim != 1:
         raise ValueError("est_H, decode_H, lap_number, and behav_var must all be 1-dimensional arrays.")
     
     # Ensure behav_var matches the data length
-    min_length = min(len(est_H), len(decode_H), len(lap_number), len(behav_var))
-    
+    # if behav_var is not None:
+    #     min_length = min(len(est_H), len(decode_H), len(lap_number))
+    #     behav_var_trimmed = behav_var[:min_length]
+    # else:
+    min_length = min(len(est_H), len(decode_H), len(lap_number))
+
     est_H_trimmed = est_H[:min_length]
     decode_H_trimmed = decode_H[:min_length]
     lap_trimmed = lap_number[:min_length]
-    behav_var_trimmed = behav_var[:min_length]
+
     
     # Compute average values for annotations
     avg_est_H = np.mean(est_H_trimmed)
@@ -1445,8 +1264,9 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, be
     colorscale = 'Viridis'  # You can choose other Plotly colorscales like 'Cividis', 'Plasma', etc.
     
     # Define color range based on behav_var
-    cmin = np.min(behav_var_trimmed)
-    cmax = np.max(behav_var_trimmed)
+    if behav_var is not None:
+        cmin = np.min(behav_var)
+        cmax = np.max(behav_var)
     
     # Create interactive plot with color mapping
     trace_est_H = go.Scatter(
@@ -1457,23 +1277,33 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, be
         line=dict(color='blue'),
         marker=dict(symbol='circle', size=8)
     )
-
-    trace_decode_H = go.Scatter(
-        x=lap_trimmed,
-        y=decode_H_trimmed,
-        mode='markers+lines',
-        name='decode_H Value',
-        line=dict(color='red', dash='dash'),
-        marker=dict(
-            symbol='x',
-            size=8,
-            color=behav_var_trimmed,
-            colorscale=colorscale,
-            cmin=cmin,
-            cmax=cmax,
-            showscale=False  # Hide colorbar for the second trace
+    if behav_var is not None:
+        trace_decode_H = go.Scatter(
+            x=lap_trimmed,
+            y=decode_H_trimmed,
+            mode='markers+lines',
+            name='decode_H Value',
+            line=dict(color='red', dash='dash'),
+            marker=dict(
+                symbol='x',
+                size=8,
+                color=behav_var,
+                colorscale=colorscale,
+                cmin=cmin,
+                cmax=cmax,
+                showscale=False  
+            )
         )
-    )
+    else:
+        trace_decode_H = go.Scatter(
+            x=lap_trimmed,
+            y=decode_H_trimmed,
+            mode='markers+lines',
+            name='decode_H Value',
+            line=dict(color='red', dash='dash'),
+            marker=dict(
+                symbol='x', size=8)
+        )
     
     data = [trace_est_H, trace_decode_H]
     
@@ -1541,119 +1371,112 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, be
         # Display the plot in the default web browser
         plot(fig)
 
-def plot_decoded_var_and_true_interactive(decoded_var=None, behav_var=None, true_angle=None,
-                                         indices=None,
-                                         xlabel='Time (seconds)', 
-                                         ylabel1='Decoded Variable', 
-                                         ylabel2='Behavioral Variable', 
-                                         legend_labels=['Decoded Variable', 'Behavioral Variable', 'True Angle'],
-                                         save_path=None,
-                                         session_idx=None,
-                                         behav_var_name=None):
+def plot_Hs_over_laps_interactive(est_H, decode_H, lap_number, behav_var=None, 
+                                  session_idx=None, session=None, save_path=None, tag=None, 
+                                  SI_score=None, decode_err=None, mean_diff=None, 
+                                  std_diff=None, behav_var_name=None, pdf=None):
     """
-    Plots decoded_var, behav_var, and true_angle interactively using Plotly and saves the plot as an HTML file.
+    Plots Hs over laps interactively, handling cases where behav_var is not provided.
 
     Parameters:
-    - decoded_var (array-like): Array of decoded variables to plot.
-    - behav_var (array-like): Array of behavioral variables to plot.
-    - true_angle (array-like, optional): Array of true angle variables to plot.
-    - indices (list or array-like, optional): Specific indices to plot. Defaults to plotting the entire array.
-    - xlabel (str, optional): Label for the x-axis.
-    - ylabel1 (str, optional): Label for the decoded_var.
-    - ylabel2 (str, optional): Label for the behav_var.
-    - title (str, optional): Plot title.
-    - legend_labels (list, optional): Labels for the three variables.
-    - save_path (str, optional): Directory path to save the plot.
+    - est_H (array-like): Estimated H values.
+    - decode_H (array-like): Decoded H values.
+    - lap_number (array-like): Lap numbers corresponding to H values.
+    - behav_var (array-like, optional): Behavioral variable for color mapping. Defaults to None.
     - session_idx (int, optional): Session index for labeling purposes.
-    - behav_var_name (str, optional): Name of the behavioral variable for labeling and filename.
+    - session (object, optional): Session data object.
+    - save_path (str, optional): Directory path to save the plot.
+    - tag (str, optional): Tag for the plot title and filename.
+    - SI_score (float, optional): SI score to display in the plot.
+    - decode_err (float, optional): Decoding error to display in the plot.
+    - mean_diff (float, optional): Mean difference to display in the plot.
+    - std_diff (float, optional): Standard deviation of difference to display in the plot.
+    - behav_var_name (str, optional): Name of the behavioral variable for labeling.
+    - pdf (PdfPages, optional): PdfPages object to save the plot in a PDF.
+
     Returns:
     - None
     """
-    min_length = min(len(decoded_var), len(behav_var), len(true_angle))
-    decoded_angles = decoded_var[:min_length]
-    binned_hipp_angle_rad = behav_var[:min_length]
-    binned_true_angle_rad = true_angle[:min_length]
-    # Set default indices to plot the entire array if not provided
-    if indices is None:
-        indices = np.arange(len(decoded_var))
-    else:
-        if isinstance(indices, slice):
-            indices = np.arange(len(decoded_var))[indices]
-        elif isinstance(indices, int):
-            indices = np.array([indices])
-        else:
-            indices = np.array(indices)
-    
-    # Extract the data for the specified indices
-    decoded_subset = np.array(decoded_var)[indices]
-    behav_subset = np.array(behav_var)[indices]
-    x_values = indices  # Assuming each index represents one second
-    
-    if true_angle is not None:
-        true_angle_subset = np.array(true_angle)[indices]
-    
-    # Create Plotly traces
-    trace_decoded = go.Scatter(
-        x=x_values,
-        y=decoded_subset,
-        mode='lines+markers',
-        name=legend_labels[0],
-        marker=dict(color='blue', symbol='circle'),
-        line=dict(color='blue')
-    )
-    
-    trace_behav = go.Scatter(
-        x=x_values,
-        y=behav_subset,
-        mode='lines+markers',
-        name=legend_labels[1],
-        marker=dict(color='red', symbol='x'),
-        line=dict(color='red', dash='dash')
-    )
-    
-    data = [trace_decoded, trace_behav]
-    
-    if true_angle is not None:
-        trace_true_angle = go.Scatter(
-            x=x_values,
-            y=true_angle_subset,
-            mode='lines+markers',
-            name=legend_labels[2],
-            marker=dict(color='green', symbol='square'),
-            line=dict(color='green', dash='dot')
+    # Ensure inputs are arrays
+    lap_number = np.atleast_1d(lap_number)
+    est_H = np.atleast_1d(est_H)
+    decode_H = np.atleast_1d(decode_H)
+    behav_var = np.atleast_1d(behav_var) if behav_var is not None else None
+
+    # Ensure inputs are the same length
+    min_length = min(len(lap_number), len(est_H), len(decode_H))
+    lap_trimmed = lap_number[:min_length]
+    est_H_trimmed = est_H[:min_length]
+    decode_H_trimmed = decode_H[:min_length]
+    behav_var_trimmed = behav_var[:min_length] if behav_var is not None else None
+
+    # Set up colorscale if behav_var is provided
+    colorscale = 'Viridis'
+    cmin, cmax = (np.min(behav_var_trimmed), np.max(behav_var_trimmed)) if behav_var is not None else (None, None)
+
+    # Create scatter trace for decoded H
+    trace_decode_H = go.Scatter(
+        x=lap_trimmed,
+        y=decode_H_trimmed,
+        mode='markers+lines',
+        name='Decoded H',
+        line=dict(color='red', dash='dash'),
+        marker=dict(
+            symbol='x',
+            size=8,
+            color=behav_var_trimmed if behav_var is not None else 'red',  # Default to 'red' if no behav_var
+            colorscale=colorscale if behav_var is not None else None,
+            cmin=cmin,
+            cmax=cmax,
+            showscale=behav_var is not None  # Only show color scale if behav_var is provided
         )
-        data.append(trace_true_angle)
-    
-    # Define the layout
+    )
+
+    # Create scatter trace for estimated H
+    trace_est_H = go.Scatter(
+        x=lap_trimmed,
+        y=est_H_trimmed,
+        mode='lines',
+        name='Estimated H',
+        line=dict(color='blue'),
+        marker=dict(symbol='circle', size=8)
+    )
+
+    # Combine traces
+    data = [trace_est_H, trace_decode_H]
+
+    # Define layout
+    title = f"{behav_var_name or 'H Values'} - {tag or ''} (Session {session_idx})"
     layout = go.Layout(
-        title=behav_var_name if session_idx is None else f"{behav_var_name} - Session {session_idx}",
-        xaxis=dict(title=xlabel),
-        yaxis=dict(title=ylabel1),
+        title=title,
+        xaxis=dict(title='Lap Number'),
+        yaxis=dict(title='H Value'),
         legend=dict(x=0, y=1.0),
         hovermode='closest'
     )
-    
+
+    # Create the figure
     fig = go.Figure(data=data, layout=layout)
-    
-    # Save the plot if save_path is provided
+
+    # Save the plot to an HTML file if save_path is provided
     if save_path:
-        full_save_path = os.path.join(save_path)
-        os.makedirs(full_save_path, exist_ok=True)
-        
-        filename = f"SI_{behav_var_name}.html"
-        file_path = os.path.join(full_save_path, filename)
-        
+        os.makedirs(save_path, exist_ok=True)
+        filename = f"{behav_var_name or 'H_values'}_{tag or ''}_session_{session_idx}.html"
+        file_path = os.path.join(save_path, filename)
         plot(fig, filename=file_path, auto_open=False)
         print(f"Interactive plot saved to {file_path}")
 
-    # Display the plot
+    # Save the plot to the PDF if a PdfPages object is provided
+    if pdf:
+        fig.write_image(pdf, format='pdf')
+
+    # Show the plot
     fig.show()
 
 
 
-
 def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=None, session_idx=None, 
-                             session=None, save_path=None, tag=None, window_size=5,SI_score=None,decode_err=None):
+                             session=None, save_path=None, tag=None, window_size=5,SI_score=None,decode_err=None,pdf=None):
     """
     Plots the moving averages of estimated hippocampal gain (est_H) against decoded gain (decode_H),
     with colors representing a behavioral variable (e.g., velocity).
@@ -1807,12 +1630,13 @@ def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=
         
         # Save the figure
         fig.savefig(full_save_path, dpi=300)
+        pdf.savefig()
         plt.close(fig)  # Close the figure to free memory
         print(f"Saved plot to {full_save_path}")
     else:
         plt.show()
 
-def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_name=None,save_dir=None,session_idx=None,dimensions_3=False):
+def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_name=None,save_dir=None,session_idx=None,dimensions_3=False,pdf=None,num_used_clusters=None):
 
     """ 
     params: 
@@ -1876,7 +1700,7 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
     ax[2].set_xlim(1.2 * np.array(ax[2].get_xlim()))
     ax[2].set_ylim(1.2 * np.array(ax[2].get_ylim()))
     ax[2].set_title('Directed graph', size=16)
-    ax[2].text(0.98, 0.05, f"SI: {SI:.2f}", horizontalalignment='right',
+    ax[2].text(0.98, 0.05, f"SI: {SI:.2f}, number of used clusters: {num_used_clusters}", horizontalalignment='right',
             verticalalignment='bottom', transform=ax[2].transAxes, fontsize=25)
     
     filename = f"SI_{behav_var_name}.png"
@@ -1886,7 +1710,8 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
     # Adjust layout and show the plot
     plt.tight_layout()
 
-    fig.savefig(os.path.join(full_save_path,filename), format='png', dpi=300, bbox_inches='tight')      
+    fig.savefig(os.path.join(full_save_path,filename), format='png', dpi=300, bbox_inches='tight')   
+    pdf.savefig()   
 
     plt.show()
 
@@ -1902,7 +1727,8 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
                               save_path=None,
                               figsize=(12, 6),
                               session_idx=None,
-                              behav_var_name=None):
+                              behav_var_name=None,
+                              pdf=None):
     """
     Plots decoded_var and behav_var over specified indices.
 
@@ -1981,6 +1807,7 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
         
         # Save the figure
         plt.savefig(os.path.join(full_save_path, filename), format='png', dpi=300, bbox_inches='tight')
+        pdf.savefig()
         print(f"Plot saved to {os.path.join(full_save_path, filename)}")
     
     # Display the plot
@@ -2129,33 +1956,35 @@ def compute_moving_average(data=None, window_size=None):
     kernel = np.ones(window_size) / window_size
     return np.convolve(data, kernel, mode='valid')
 
-def save_data_to_csv(data_dict, save_dir,list=False):
+def save_data_to_csv(data_dict, save_dir, is_list=False):
     """
-    Saves the provided data dictionary into a CSV file within a session-specific folder.
+    Saves the provided data dictionary or list of dictionaries into a CSV file.
 
     Parameters:
-    - data_dict (dict): Dictionary containing all the data to save.
-    - save_dir (str): Base directory where session folders are located.
+    - data_dict (dict or list): Data to save (single dict or list of dicts).
+    - save_dir (str): Directory where the CSV file will be saved.
+    - is_list (bool): Whether the input data is a list of dictionaries or a single dictionary.
     """
-    if(list):
-        df = pd.DataFrame(data_dict)
-        csv_file = os.path.join(save_dir, "total")
-    else:
-        df = pd.DataFrame([data_dict])
-        csv_file = os.path.join(save_dir, f"session_{data_dict.get('session_idx', 'unknown')}")
+    # check save direct exists
+    os.makedirs(save_dir, exist_ok=True)
 
+    # Create a DataFrame from the data
+    if is_list:
+        # Expecting a list of dictionaries
+        df = pd.DataFrame(data_dict)
+        csv_file = os.path.join(save_dir, "total_results.csv")
+    else:
+        # Expecting a single dictionary
+        df = pd.DataFrame([data_dict])
+        csv_file = os.path.join(save_dir, "results.csv")
+
+    # Round numerical data to 2 decimal places
     df = df.round(2)
 
-
-    os.makedirs(csv_file, exist_ok=True)
-
-    # Define CSV file path
-    csv_file = os.path.join(csv_file, "results.csv")
-
-    # Save to CSV
+    # Save the df to csv file
     df.to_csv(csv_file, index=False)
 
-    print(f"Data saved to {csv_file}")
+    print(f"CSV Data saved to {csv_file}")
 
 def plot_scatter(data, x_key, y_key, x_label, y_label, title):
     """
@@ -2182,10 +2011,124 @@ def plot_scatter(data, x_key, y_key, x_label, y_label, title):
     plt.grid(True)
     plt.show()
 
-def plot_spatial_spectrogram(H=None,lap_numbers=None,save_path=None,behav_var_name=None):
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import signal
+from scipy.interpolate import interp1d
+
+def plot_spatial_spectrogram(H=None, lap_numbers=None, save_path=None, behav_var_name=None,num_segments_per_lap=10):
+    # Input validation
+    if H is None or lap_numbers is None:
+        raise ValueError("H and lap_numbers must both be provided.")
+    if len(H) == 0 or len(lap_numbers) == 0:
+        raise ValueError("H and lap_numbers cannot be empty.")
+    if len(H) != len(lap_numbers):
+        raise ValueError("H and lap_numbers must have the same length.")
     
-    lap_numbers=lap_numbers[:400]
-    H=H[:400]
+    # Check if lap_numbers are evenly spaced
+    differences = np.diff(lap_numbers)
+    if not np.allclose(differences, differences[0], atol=1e-6):
+        # Resample H to evenly spaced laps
+        print("Resampling lap_numbers to ensure even spacing...")
+        num_samples = len(lap_numbers)
+        lap_numbers_uniform = np.linspace(lap_numbers.min(), lap_numbers.max(), num_samples)
+        interp_func = interp1d(lap_numbers, H, kind="linear", fill_value="extrapolate")
+        H_uniform = interp_func(lap_numbers_uniform)
+        lap_numbers = lap_numbers_uniform
+        H = H_uniform
+
+    # Calculate spatial sampling frequency
+    dx = lap_numbers[1] - lap_numbers[0]  # Interval between samples
+    fs = 1 / dx  # Sampling frequency
+
+    # Calculate nperseg based on average samples per lap
+    average_samples_per_lap = len(H) / (np.max(lap_numbers)-np.min(lap_numbers))
+    nperseg = int(average_samples_per_lap)  # Convert to integer
+    nperseg = max(1, nperseg)  # Ensure nperseg is at least 1
+    noverlap = nperseg // 2  # 50% overlap
+
+    # Compute spectrogram
+    frequencies, positions, Sxx = signal.spectrogram(
+        H,
+        fs=fs,
+        window="hann",
+        nperseg=nperseg,
+        noverlap=noverlap,
+        scaling="density",
+        mode="magnitude",
+    )
+
+    print(f"length of H: {len(H)}, len(lap nums): {len(lap_numbers)}, {min(lap_numbers)}, max: {max(lap_numbers)}")
+
+    # Debugging outputs
+    print(f"nperseg: {nperseg}, Sxx shape: {Sxx.shape}, min: {Sxx.min()}, max: {Sxx.max()}")
+
+    if Sxx.size == 0 or np.all(Sxx == 0):
+        print("Warning: Spectrogram data (Sxx) is empty or all zeros!")
+
+    # Plot the spectrogram
+    plt.figure(figsize=(12, 6))
+    plt.pcolormesh(positions, frequencies, Sxx, shading="gouraud", cmap="viridis")
+    plt.title("Spatial Spectrogram of H over Lap Numbers")
+    plt.ylabel("Spatial Frequency [cycles per lap]")
+    plt.xlabel("Lap Number")
+    plt.colorbar(label="Intensity")
+    plt.tight_layout()
+
+    # Save the plot
+    if save_path and behav_var_name:
+        os.makedirs(save_path, exist_ok=True)
+        file_path = os.path.join(save_path, f"{behav_var_name}.png")
+        plt.savefig(file_path)
+        print(f"Spectrogram saved to: {file_path}")
+    else:
+        print("No save path or file name provided. Plot not saved.")
+    
+    plt.show()
+    plt.close()
+
+    dominant_frequencies = frequencies[np.argmax(Sxx, axis=0)]
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(positions, dominant_frequencies, marker="o")
+    plt.xlabel("Lap Number")
+    plt.ylabel("Dominant Frequency [cycles per lap]")
+    plt.title("Dominant Spatial Frequency Across Laps")
+    plt.grid(True)
+    plt.show()
+
+def plot_spatial_spectrogram_interactive(
+    H=None,
+    lap_numbers=None,
+    save_path=None,
+    behav_var_name=None,
+    session_idx=None,
+    session=None,
+    tag=None,
+    additional_annotations=None,
+    num_segments_per_lap=10
+):
+    """
+    Creates an interactive spectrogram plot.
+
+    Parameters:
+    - H (np.ndarray): Signal data.
+    - lap_numbers (np.ndarray): Lap numbers corresponding to the signal.
+    - save_path (str): Directory to save the interactive plot HTML.
+    - behav_var_name (str): Name of the behavioral variable.
+    - session_idx (int, optional): Session index for labeling purposes.
+    - session (object, optional): Session object containing metadata.
+    - tag (str, optional): Tag to include in the saved plot's filename.
+    - additional_annotations (dict, optional): Dictionary of additional annotations.
+
+    Returns:
+    - None
+    """
+    # Input validation
+    if H is None or lap_numbers is None:
+        raise ValueError("H and lap_numbers must both be provided.")
 
     # Check if lap_numbers are evenly spaced
     differences = np.diff(lap_numbers)
@@ -2193,45 +2136,94 @@ def plot_spatial_spectrogram(H=None,lap_numbers=None,save_path=None,behav_var_na
         # Resample H to evenly spaced laps
         num_samples = len(lap_numbers)
         lap_numbers_uniform = np.linspace(lap_numbers.min(), lap_numbers.max(), num_samples)
-        interp_func = interp1d(lap_numbers, H, kind='linear')
+        interp_func = interp1d(lap_numbers, H, kind="linear")
         H_uniform = interp_func(lap_numbers_uniform)
         lap_numbers = lap_numbers_uniform
         H = H_uniform
 
+    # Calculate spatial sampling frequency
+    dx = lap_numbers[1] - lap_numbers[0]  # Interval between samples
+    fs = 1 / dx  # Sampling frequency
 
-    dx = lap_numbers[1] - lap_numbers[0]  # interval between samples
-    fs = 1 / dx  #sampling frequency
+    # Spectrogram parameters
+    average_samples_per_lap = len(H) / (np.max(lap_numbers)-np.min(lap_numbers))
+    nperseg = int(average_samples_per_lap/2)  # Convert to integer
+    nperseg = max(1, nperseg)  # Ensure nperseg is at least 1
+    noverlap = nperseg // 2
 
-
-    nperseg = 256  # Number of samples per segment
-    noverlap = nperseg // 2  # Overlap between segments
-
+    # Compute spectrogram
     frequencies, positions, Sxx = signal.spectrogram(
         H,
         fs=fs,
-        window='hann',
+        window="hann",
         nperseg=nperseg,
         noverlap=noverlap,
-        scaling='density',
-        mode='magnitude'
+        scaling="density",
+        mode="magnitude",
     )
 
+    # Create a Plotly heatmap for the spectrogram
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=Sxx,
+            x=positions,
+            y=frequencies,
+            colorscale="Viridis",
+            colorbar=dict(title="Intensity"),
+        )
+    )
 
-    plt.figure(figsize=(12, 6))
-    # Convert positions back to lap numbers
-    plt.pcolormesh(positions, frequencies, Sxx, shading='gouraud', cmap='viridis')
-    plt.title('Spatial Spectrogram of H over Lap Numbers')
-    plt.ylabel('Spatial Frequency [cycles per lap]')
-    plt.xlabel('Lap Number')
-    plt.colorbar(label='Intensity')
-    plt.tight_layout()
+    base_title = f"Spatial Spectrogram of {behav_var_name} Over Laps"
+    if session_idx is not None and session is not None:
+        base_title += f"<br>Session {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}"
+        if tag is not None:
+            base_title += f", Tag {tag}"
+
+    fig.update_layout(
+        title=base_title,
+        xaxis=dict(title="Lap Number"),
+        yaxis=dict(title="Spatial Frequency [cycles per lap]"),
+        template="plotly",
+    )
+
+    if additional_annotations:
+        annotation_text = "<br>".join([f"{key}: {val}" for key, val in additional_annotations.items()])
+        fig.add_annotation(
+            xref="paper",
+            yref="paper",
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            text=annotation_text,
+            showarrow=False,
+            font=dict(size=12),
+            bgcolor="white",
+            opacity=0.8,
+        )
+
+
+    os.makedirs(save_path, exist_ok=True)
+    file_path = os.path.join(save_path, f"{behav_var_name}_spectrogram.html")
+    fig.write_html(file_path)
+    print(f"Interactive spectrogram saved at: {file_path}")
+
+def plot_dominant_frequencies(Sxx=None,frequencies=None,lap_numbers=None):
+
+    dominant_frequencies = frequencies[np.argmax(Sxx, axis=0)]
+
+    plt.figure(figsize=(10, 4))
+    plt.plot(lap_numbers, dominant_frequencies, marker="o")
+    plt.xlabel("Lap Number")
+    plt.ylabel("Dominant Frequency [cycles per lap]")
+    plt.title("Dominant Spatial Frequency Across Laps")
+    plt.grid(True)
     plt.show()
 
-    file_path = os.path.join(save_path,behav_var_name)
 
-    plt.savefig(file_path)
 
-    plt.close()
+   
+
 
 
 
