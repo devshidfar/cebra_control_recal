@@ -8,8 +8,8 @@ The code performs the following key steps:
 
 1. **Data Loading and Preprocessing:**  
    - Extracts hippocampal neural spike data, behavioural variables (e.g., angle, velocity), and session metadata.
-   - Filters and bins the data based on running speed thresholds.
-   - Removes clusters with low isolation quality (see Madhav et al., 2019).
+   - Filters and bins the data in 1 sedcond bins and removes time points with running speed less than 5 degrees per second (variable).
+   - Removes clusters with isolation quality higher than 4 (see Madhav et al., 2019).
 
 2. **Dimensionality Reduction and Manifold Learning (CEBRA):**  
    - Uses CEBRA (https://cebra.ai/) to find low-dimensional embeddings of the high-dimensional neural spike data.
