@@ -3,8 +3,8 @@
 import unittest
 import numpy as np
 import sys
-sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal")
-from cebra_utils import *
+sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recals")
+from old_jupyter_notebook_version.cebra_utils import *
 
 
 class TestComputeCurvature(unittest.TestCase):

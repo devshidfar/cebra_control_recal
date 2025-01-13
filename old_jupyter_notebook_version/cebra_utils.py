@@ -1,6 +1,7 @@
 import sys
 import cebra
-sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/spud_code/shared_scripts")
+sys.path.append('/Users/devenshidfar/Desktop/Masters/NRSC_510B/'
+                'cebra_control_recal/spud_code/shared_scripts')
 import manifold_fit_and_decode_fns_custom as mff
 import fit_helper_fns_custom as fhf
 import numpy as np
@@ -24,7 +25,8 @@ import pandas as pd
 from sklearn.neighbors import NearestNeighbors
 import matplotlib.colors as mcolors
 from matplotlib.cm import ScalarMappable
-sys.path.append('/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/SI_code')
+sys.path.append('/Users/devenshidfar/Desktop/Masters/NRSC_510B/'
+                'cebra_control_recal/SI_code')
 from real_data.SI_code.structure_index import compute_structure_index, draw_graph
 import os
 import numpy as np
@@ -53,9 +55,17 @@ from scipy import signal
 from scipy.interpolate import interp1d
 from scipy.io import savemat
 from matplotlib.backends.backend_pdf import PdfPages
+from scipy import signal
+from scipy.interpolate import interp1d
 
 
-def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principal_curve=None, tt=None, behav_angles=None,true_angles=None):
+def calculate_average_difference_in_decoded_hipp_angle(
+        embeddings=None, 
+        principal_curve=None, 
+        tt=None, 
+        behav_angles=None,
+        true_angles=None
+):
     """
     Calculate the average difference between the predicted hippocampal angles
     decoded from the spline and the actual hippocampal angles.
@@ -77,19 +87,24 @@ def calculate_average_difference_in_decoded_hipp_angle(embeddings=None, principa
     return decoded_angles, mse
 
 def window_smooth(data=None, window_size=3):
-    # Step 1: Compute finite differences
+    #Compute finite differences
     diffs = np.diff(data)
     
-    # Step 2: Compute the moving average of differences
-    # Create a convolution kernel for averaging
+    # Compute the moving average of differences
     kernel = np.ones(window_size) / window_size
-    avg_diffs = np.convolve(diffs, kernel, mode='valid')  # Valid ensures proper windowing
+    avg_diffs = np.convolve(diffs, kernel, mode='valid') 
     
     return avg_diffs
 
 
 
-def run_persistent_homology(embeddings, session_idx, session, results_save_path, dimension):
+def run_persistent_homology(
+    embeddings, 
+    session_idx, 
+    session, 
+    results_save_path, 
+    dimension
+):
     """
     Runs persistent homology on embeddings, saves Betti number plots,
     and parametrizes embeddings in polar coordinates.
@@ -195,31 +210,7 @@ def run_persistent_homology(embeddings, session_idx, session, results_save_path,
     else:
         print("Polar coordinates not computed.")
 
-# def nt_TDA(data): #taken from Sebastien et al.
-
-#     # Compute pairwise distances between points in the data
-#     D = pairwise_distances(data)
-#     print("Pairwise distances matrix:\n", D)  # Print the distance matrix
-    
-#     # Set the diagonal of the distance matrix to NaN to ignore self-distances
-#     np.fill_diagonal(D, np.nan)
-#     print("Distance matrix with NaN on diagonal:\n", D)  # Print modified distance matrix
-    
-#     # Calculate number of neighbors within the 5th percentile distance for each point
-#     nn_dist = np.sum(D < np.nanpercentile(D, 5), axis=1)
-#     print("Number of neighbors within 5th percentile:\n", nn_dist)  # Print neighbor count per point
-    
-#     # Identify noisy points where neighbor count is below the 20th percentile
-#     noiseIdx = nn_dist < np.percentile(nn_dist, 20)
-#     print("Noise index (True indicates noisy point):\n", noiseIdx)  # Print noise index array
-    
-#     # Print the sum of noisy points
-#     print("Total number of noisy points:", sum(noiseIdx))  # Print count of noisy points
-    
-#     return noiseIdx
-
-
-def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
+def nt_TDA(data, pct_distance=1, pct_neighbors=20, pct_dist=90):
     # Compute the pairwise distance matrix
     distances = distance_matrix(data, data)
     np.fill_diagonal(distances, 10)
@@ -286,7 +277,16 @@ def nt_TDA(data, pct_distance=1, pct_neighbors=20,pct_dist=90):
     
     return inlier_indices
 
-def plot_time_vs_distance(embeddings, principal_curve, times,x_axis_var, annotate_var, annotate_var_name,session,session_idx, bin_size, dimension, save_path=None):
+def plot_time_vs_distance(embeddings, 
+        principal_curve, 
+        times,x_axis_var, 
+        annotate_var, 
+        annotate_var_name,
+        session,session_idx, 
+        bin_size, 
+        dimension, 
+        save_path=None
+):
     """
     Plots time vs. distance of each embedding point to the spline with a velocity color map.
 
@@ -308,7 +308,9 @@ def plot_time_vs_distance(embeddings, principal_curve, times,x_axis_var, annotat
     scatter = plt.scatter(times, distances, c=annotate_var, cmap='viridis', s=50, edgecolor='k', alpha=0.7)
     plt.xlabel(f'{x_axis_var}', fontsize=14)
     plt.ylabel('Distance to Spline', fontsize=14)
-    plt.title(f'Session_idx: {session_idx}, Rat: {session.rat}, Day: {session.day}, Epoch: {session.epoch}, Dimension: {dimension}',  fontsize=16)
+    plt.title(f'Session_idx: {session_idx}, Rat: {session.rat},'
+              ' Day: {session.day}, Epoch: {session.epoch}, '
+              'Dimension: {dimension}',  fontsize=16)
     cbar = plt.colorbar(scatter)
     cbar.set_label(f'{annotate_var_name}', fontsize=12)
     plt.grid(True, linestyle='--', alpha=0.5)
@@ -355,8 +357,15 @@ def plot_initial_knots(data_points, init_knots, session_idx, session, save_path=
         plt.show()
 
 
-def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
-                       session=None, results_save_path=None,fit_params=None,dimension_3d=None,verbose=False):
+def fit_spud_to_cebra(
+        embeddings, 
+        ref_angle=None,
+        session_idx=None,
+        session=None, 
+        results_save_path=None,
+        fit_params=None,
+        dimension_3d=None,
+        verbose=False):
 #     # Set up the fit parameters, taken base from Chaudhuri et al.
 
     # Create fitter object
@@ -460,40 +469,56 @@ def fit_spud_to_cebra(embeddings, ref_angle=None,session_idx=None,
     return curve, curve_pre, tt
 
 
-# def plot_in_3d(embeddings,session, behav_var, name_behav_var,principal_curve=None):
-#     fig = plt.figure(figsize=(10, 8))
+def plot_in_3d(
+    embeddings,session, 
+    behav_var, 
+    name_behav_var,
+    principal_curve=None
+):
+    fig = plt.figure(figsize=(10, 8))
     
-#      # 3D plot
-#     ax2 = fig.add_subplot(122, projection='3d')
-#     scatter_3d = ax2.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2])
-#     ax2.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
-#     ax2.set_xlabel('Embedding Dimension 1')
-#     ax2.set_ylabel('Embedding Dimension 2')
-#     ax2.set_zlabel('Embedding Dimension 3')
+     # 3D plot
+    ax2 = fig.add_subplot(122, projection='3d')
+    scatter_3d = ax2.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2])
+    ax2.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
+    ax2.set_xlabel('Embedding Dimension 1')
+    ax2.set_ylabel('Embedding Dimension 2')
+    ax2.set_zlabel('Embedding Dimension 3')
 
 
-#     # Plotting
-#     fig = plt.figure(figsize=(10, 8))
-#     ax = fig.add_subplot(111, projection='3d')
+    # Plotting
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
 
-#     # Plot the original points
-#     scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], 
-#                         c=behav_var, cmap='viridis', s=5)
-#     if(principal_curve is not None):
-#         # Plot the principal curve
-#         ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
+    # Plot the original points
+    scatter = ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], 
+                        c=behav_var, cmap='viridis', s=5)
+    if(principal_curve is not None):
+        # Plot the principal curve
+        ax.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2], color='red', linewidth=2)
 
-#     ax.set_xlabel('CEBRA Dimension 1')
-#     ax.set_ylabel('CEBRA Dimension 2')
-#     ax.set_zlabel('CEBRA Dimension 3')
-#     ax.set_title('Principal Curve of CEBRA-processed Neural Data')
+    ax.set_xlabel('CEBRA Dimension 1')
+    ax.set_ylabel('CEBRA Dimension 2')
+    ax.set_zlabel('CEBRA Dimension 3')
+    ax.set_title('Principal Curve of CEBRA-processed Neural Data')
 
-#     plt.colorbar(scatter, label=f'{name_behav_var}')
-#     plt.show()
+    plt.colorbar(scatter, label=f'{name_behav_var}')
+    plt.show()
 
-def plot_in_3d_static(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, 
-                          save_path=None, principal_curve=None, tt=None, num_labels=10, 
-                          mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None,pdf=None):
+def plot_in_3d_static(
+    embeddings_3d=None,
+    session=None,
+    behav_var=None,
+    name_behav_var=None,
+    save_path=None,
+    principal_curve=None,
+    tt=None,
+    num_labels=10,
+    mean_dist=None,
+    avg_angle_diff=None,
+    shuffled_avg_angle_diff=None,
+    pdf=None,
+):
     """
     Plots a static 3D plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline and saves the plot.
@@ -565,7 +590,20 @@ def plot_in_3d_static(embeddings_3d=None, session=None, behav_var=None, name_beh
 
     
 
-def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, name_behav_var=None, anim_save_path=None, save_anim=None, principal_curve=None, tt=None, num_labels=10, mean_dist=None, avg_angle_diff=None, shuffled_avg_angle_diff=None):
+def create_rotating_3d_plot(
+    embeddings_3d=None,
+    session=None,
+    behav_var=None,
+    name_behav_var=None,
+    anim_save_path=None,
+    save_anim=None,
+    principal_curve=None,
+    tt=None,
+    num_labels=10,
+    mean_dist=None,
+    avg_angle_diff=None,
+    shuffled_avg_angle_diff=None,
+):
     """
     Plots a 3D rotating plot of embeddings with the same color map for both `behav_var` and `tt` on the spline.
     Labels a certain number of points evenly spaced along the spline.
@@ -623,13 +661,17 @@ def create_rotating_3d_plot(embeddings_3d=None, session=None, behav_var=None, na
         # Position: (x, y) in figure coordinates [0,1]
         fig.text(
             0.05, 0.95,
-            f'Mean Distance from spline: {mean_dist:.2f}, Avg angle diff: {avg_angle_diff:.2f} ({avg_angle_diff * (360/(2*np.pi)):.2f} degrees), Shufled avg angle diff: {shuffled_avg_angle_diff:.2f} ({shuffled_avg_angle_diff * (360/(2*np.pi)):.2f} degrees)',
+            f'Mean Distance from spline: {mean_dist:.2f}, Avg angle diff:'
+            ' {avg_angle_diff:.2f} ({avg_angle_diff * (360/(2*np.pi)):.2f} '
+            'degrees), Shufled avg angle diff: {shuffled_avg_angle_diff:.2f} '
+            '({shuffled_avg_angle_diff * (360/(2*np.pi)):.2f} degrees)',
             fontsize=10,
             verticalalignment='top',
             bbox=dict(facecolor='white', alpha=0.6, edgecolor='none', pad=5)
         )
 
-    ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, Epoch {session.epoch} Embeddings")
+    ax.set_title(f"3D: Rat {session.rat}, Day {session.day}, "
+                 "Epoch {session.epoch} Embeddings")
     ax.set_xlabel('Embedding Dimension 1')
     ax.set_ylabel('Embedding Dimension 2')
     ax.set_zlabel('Embedding Dimension 3')
@@ -667,7 +709,11 @@ def apply_cebra(neural_data=None,output_dimension=3,temperature=1):
 
     '''
      
-    model = cebra.CEBRA(output_dimension=output_dimension, max_iterations=1000, batch_size = 512,temperature=temperature)   
+    model = cebra.CEBRA(
+        output_dimension=output_dimension,
+        max_iterations=1000, 
+        batch_size = 512,
+        temperature=temperature)   
     model.fit(neural_data)
     embeddings = model.transform(neural_data)
     return embeddings
@@ -679,13 +725,22 @@ def dist_tot_to_princ_curve(embeddings=None,principal_curve=None):
         # Calculate the mean distance
         mean_distance = np.mean(distances)
 
-        print(f"The mean distance from the embeddings to the principal curve is: {mean_distance}")
-        print(f"The min distance from the embeddings to the principal curve is: {np.min(distances)}")
-        print(f"The max distance from the embeddings to the principal curve is: {np.max(distances)}")
+        print(f"The mean distance from the embeddings to the principal "
+              "curve is: {mean_distance}")
+        print(f"The min distance from the embeddings to the principal "
+              "curve is: {np.min(distances)}")
+        print(f"The max distance from the embeddings to the principal "
+              "curve is: {np.max(distances)}")
 
         return mean_distance
 
-def plot_in_2d(embeddings=None,session=None, behav_var=None, name_behav_var=None,principal_curve=None):
+def plot_in_2d(
+    embeddings=None,
+    session=None,
+    behav_var=None,
+    name_behav_var=None,
+    principal_curve=None,
+):
     fig, ax = plt.subplots(figsize=(10,8))
     # 2D plot
     scatter_2d = ax.scatter(embeddings[:, 0], embeddings[:, 1],c=behav_var, cmap='viridis', s=5)
@@ -756,259 +811,40 @@ def interpolate_principal_curve(principal_curve, points_per_unit_distance=10):
     
     return interpolated_curve
 
-
-#not in use
-def plot_embeddings_side_by_side(embeddings_2d, embeddings_3d, umap_embeddings, session, hipp_angle_binned, true_angle_binned, principal_curve_2d, principal_curve_3d, save_path):
-    """
-    Plot CEBRA 2D, CEBRA 3D (projected to 2D), and UMAP 2D embeddings side by side.
-    
-    Parameters:
-    - embeddings_2d (np.ndarray): CEBRA 2D embeddings.
-    - embeddings_3d (np.ndarray): CEBRA 3D embeddings.
-    - umap_embeddings (np.ndarray): UMAP 2D embeddings.
-    - session: Session object containing metadata.
-    - hipp_angle_binned (np.ndarray): Binned hippocampal angles.
-    - true_angle_binned (np.ndarray): Binned true angles.
-    - principal_curve_2d (np.ndarray): Principal curve for CEBRA 2D.
-    - principal_curve_3d (np.ndarray): Principal curve for CEBRA 3D.
-    - save_path (str): Path to save the figure.
-    
-    Returns:
-    - None
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(24, 8))
-
-    # CEBRA 2D Embedding
-    sc1 = axes[0].scatter(embeddings_2d[:,0], embeddings_2d[:,1], c=hipp_angle_binned, cmap='viridis', s=10)
-    axes[0].plot(principal_curve_2d[:,0], principal_curve_2d[:,1], color='red', linewidth=2)
-    axes[0].set_title('CEBRA 2D Embedding')
-    axes[0].set_xlabel('Dimension 1')
-    axes[0].set_ylabel('Dimension 2')
-    plt.colorbar(sc1, ax=axes[0], label='Hipp Angle (°)')
-
-    # CEBRA 3D Embedding projected to 2D
-    sc2 = axes[1].scatter(embeddings_3d[:,0], embeddings_3d[:,1], c=true_angle_binned, cmap='plasma', s=10)
-    axes[1].plot(principal_curve_3d[:,0], principal_curve_3d[:,1], color='red', linewidth=2)
-    axes[1].set_title('CEBRA 3D Embedding (Projected to 2D)')
-    axes[1].set_xlabel('Dimension 1')
-    axes[1].set_ylabel('Dimension 2')
-    plt.colorbar(sc2, ax=axes[1], label='True Angle (°)')
-
-    # UMAP 2D Embedding
-    sc3 = axes[2].scatter(umap_embeddings[:,0], umap_embeddings[:,1], c=true_angle_binned, cmap='inferno', s=10)
-    axes[2].set_title('UMAP 2D Embedding')
-    axes[2].set_xlabel('UMAP Dimension 1')
-    axes[2].set_ylabel('UMAP Dimension 2')
-    plt.colorbar(sc3, ax=axes[2], label='True Angle (°)')
-
-    plt.suptitle(f"Rat {session.rat}, Day {session.day}, Epoch {session.epoch}", fontsize=16)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(save_path)
-    plt.close()
-    print(f"Saved embedding plots to {save_path}")
-    
-    return
-
-#not in use
-def umap_and_tSNE_vis(neural_data,embeddings_2d,embeddings_3d,hipp_angle_binned,true_angle_binned,principal_curve_2d,principal_curve_3d,session,session_idx,results_save_path):
-    # Compute UMAP embeddings
-    print("Computing UMAP embeddings...")
-    umap_reducer = umap.UMAP(n_components=2, random_state=42)
-    umap_embeddings = umap_reducer.fit_transform(neural_data)
-    print(f"UMAP embeddings shape: {umap_embeddings.shape}")
-
-    # Plot UMAP embeddings side by side
-    plot_save_path = os.path.join(results_save_path, f"session_{session_idx + 1}_embeddings.png")
-    plot_embeddings_side_by_side(
-        embeddings_2d=embeddings_2d,
-        embeddings_3d=embeddings_3d,
-        umap_embeddings=umap_embeddings,
-        session=session,
-        hipp_angle_binned=hipp_angle_binned,
-        true_angle_binned=true_angle_binned,
-        principal_curve_3d=principal_curve_3d,
-        save_path=plot_save_path
-    )
-
-    # Perform t-SNE embedding
-    print("Performing t-SNE embedding...")
-    tsne = TSNE(n_components=2, perplexity=30, random_state=42)
-    tsne_embeddings = tsne.fit_transform(neural_data)
-    print(f"t-SNE embeddings shape: {tsne_embeddings.shape}")
-
-    # Plot t-SNE embeddings
-    plt.figure(figsize=(10, 8))
-    scatter = plt.scatter(tsne_embeddings[:, 0], tsne_embeddings[:, 1], s=10, c=hipp_angle_binned, cmap='viridis')
-    plt.title('t-SNE Visualization')
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-    cbar = plt.colorbar(scatter)
-    cbar.set_label('Hippocampal Angle (degrees)')
-    plt.show()
-    print("Displayed t-SNE plot.")
-
-    return
-
-
-#not in use
-def calculate_over_experiment_H_array(decoded_angles=None,true_angles=None,spacing=None):
-
-    def calculate_single_H_array(decoded_angle_t0=None, decoded_angle_t1=None, true_angle_t0=None, true_angle_t1=None):
-
-        print(f"Inputs:")
-        print(f"  decoded_angle_t0: {decoded_angle_t0}")
-        print(f"  decoded_angle_t1: {decoded_angle_t1}")
-        print(f"  true_angle_t0: {true_angle_t0}")
-        print(f"  true_angle_t1: {true_angle_t1}")
-        
-        true_diff = true_angle_t1 - true_angle_t0
-        if true_diff == 0:
-            true_diff = 1e-6
-            print("  true_diff was zero, adjusted to 1e-6 to avoid division by zero.")
-        print(f"  true_diff: {true_diff}")
-        
-        decoded_diff = (decoded_angle_t1 - decoded_angle_t0) % (2 * np.pi)
-        print(f"  decoded_diff (wrapped to [0, 2π]): {decoded_diff}")
-        
-        wrapped_true_diff = true_diff % (2 * np.pi)
-        print(f"  wrapped_true_diff (wrapped to [0, 2π]): {wrapped_true_diff}")
-        
-        H = decoded_diff / wrapped_true_diff
-        print(f"  Calculated H: {H}")
-        
-        return H
-    
-    print(f"decoded: {len(decoded_angles)}")
-    print(f"true: {len(true_angles)}")
-
-    H_list = []
-    for i in range(len(true_angles)-1-spacing):
-        t0 = i
-        t1 = i + spacing  
-        H_temp = calculate_single_H_array(decoded_angle_t0=decoded_angles[t0], decoded_angle_t1=decoded_angles[t1], true_angle_t0=true_angles[t0], true_angle_t1=true_angles[t1])
-        H_list.append(H_temp)
-
-
-    return np.array(H_list)
-
-
-#not in use
-def calculate_over_experiment_H(principal_curve=None, tt=None, embeddings=None,true_angle=None,num_avg_over=2, spacing=0, n_neighbors=5):
-
-    def calculate_single_H_neighbors(principal_curve=None, tt=None, embeddings=None, t0=None, t1=None, true_angle=None, n_neighbors=None):
-        """
-        Calculate the hippocampal gain (H) between two time points t0 and t1
-        by averaging the tt values from the closest manifold coordinates of the n nearest neighbors
-        of the embeddings at t0 and t1.
-        
-        Parameters:
-        - principal_curve (np.ndarray): Array representing the principal manifold.
-        - tt (np.ndarray): Array of parameterization along the principal curve.
-        - embeddings (np.ndarray): Array of embedding vectors for each time point.
-        - t0 (int): Starting time index.
-        - t1 (int): Ending time index.
-        - true_angle (np.ndarray): Array of true angles corresponding to each time point.
-        - n_neighbors (int): Number of closest neighbors to consider (default=5).
-        
-        Returns:
-        - H (float): Calculated hippocampal gain between t0 and t1.
-        """
-        
-        # Ensure t0 and t1 are within the valid range
-        if t0 >= len(embeddings) or t1 >= len(embeddings):
-            raise IndexError(f"t0 or t1 is out of bounds for embeddings of length {len(embeddings)}.")
-        
-        # Fit Nearest Neighbors model on embeddings
-        nbrs = NearestNeighbors(n_neighbors=n_neighbors+1, algorithm='auto').fit(embeddings)
-        
-        # Function to compute average tt value for a given embedding index
-        def get_avg_tt(embedding_index):
-            # Get the embedding at the specified index
-            embedding_point = embeddings[embedding_index].reshape(1, -1)
-            # Find the n_neighbors+1 closest embeddings (including itself)
-            distances, indices = nbrs.kneighbors(embedding_point)
-            # Exclude the embedding itself
-            neighbor_indices = indices[0][1:]
-            tt_values = []
-            for idx in neighbor_indices:
-                # Get the embedding of the neighbor
-                embedding_neighbor = embeddings[idx].reshape(1, -1)
-                # Find the closest manifold coordinate for the neighbor
-                _, _, tt_index = fhf.get_closest_manifold_coords(principal_curve, tt, embedding_neighbor, return_all=True)
-                tt_value = tt[tt_index]
-                tt_values.append(tt_value)
-            # Calculate the mean of the tt values
-            # print(f"IN CALCULATE H, the tt values: {tt_values}")
-            return np.mean(tt_values)
-        
-        # Get average tt values for t0 and t1
-        avg_tt_t0 = get_avg_tt(t0)
-        avg_tt_t1 = get_avg_tt(t1)
-        
-        # Compute the difference in true angles
-        true_angle_diff = true_angle[t1] - true_angle[t0]
-        if true_angle_diff == 0:
-            print(f"Division by zero encountered for t0={t0} and t1={t1}. Adding a small epsilon to denominator.")
-            true_angle_diff += 1e-9  # Add a small value to avoid division by zero
-
-        
-        # Calculate the hippocampal gain H
-        H = (((avg_tt_t1 - avg_tt_t0) % (2*np.pi)) / ((true_angle_diff) % (2*np.pi)))
-
-        return H
-
-    """
-    Calculate the hippocampal gain (H) over an entire experiment by averaging over specified time steps.
-    
-    Parameters:
-    - principal_curve: Array representing the principal manifold.
-    - tt: Array of temporal or spatial indices corresponding to the principal_curve.
-    - embeddings: Array of embedding vectors for each time point.
-    - true_angle: Array of true angles corresponding to each time point.
-    - num_avg_over: Number of time steps to average over (default=3).
-    - spacing: Spacing between time points to consider for averaging (default=2).
-    
-    Returns:
-    - H_array: Array of averaged hippocampal gain values across the experiment.
-    """
-    
-    H_list = []
-    embeddings_length = len(embeddings)
-
-    for i in range(((len(embeddings)-1)-spacing)):
-
-        H_temp_list = []
-        t0 = i
-        for j in range(num_avg_over):
-            t1 = i + j + spacing
-            if t1 >= embeddings_length:
-                raise IndexError(
-                    f"Index t1={t1} out of bounds for embeddings of length {embeddings_length}."
-                )
-            H_temp = calculate_single_H_neighbors(principal_curve, tt, embeddings, t0, t1, true_angle,n_neighbors=n_neighbors)
-            H_temp_list.append(H_temp)
-
-        H_temp = np.mean(H_temp_list)
-        H_list.append(H_temp)
-    
-    return np.array(H_list)
-
-def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=None, session_idx=None, 
-           session=None, save_path=None, tag=None, is_moving_avg=False, SI_score=None, decode_err=None, pdf=None):
+def plot_Hs_over_time(
+    est_H=None,
+    decode_H=None,
+    behav_var=None,
+    behav_var_name=None,
+    session_idx=None,
+    session=None,
+    save_path=None,
+    tag=None,
+    is_moving_avg=False,
+    SI_score=None,
+    decode_err=None,
+    pdf=None,
+):
     """
     Plots estimated hippocampal gain (est_H) against decoded gain (decode_H).
-    Optionally, if moving averaged data and behavioral variables are provided, it plots them with color mapping.
+    Optionally, if moving averaged data and behavioral variables are provided, 
+    it plots them with color mapping.
 
     Parameters:
     - est_H (np.ndarray): Array of estimated gain values.
     - decode_H (np.ndarray): Array of decoded gain values.
-    - behav_var (np.ndarray, optional): Array of behavioral variable values (e.g., velocity).
-    - behav_var_name (str, optional): Name of the behavioral variable for labeling.
+    - behav_var (np.ndarray, optional): Array of behavioral 
+    variable values (e.g., velocity).
+    - behav_var_name (str, optional): Name of the behavioral variable 
+    for labeling.
     - session_idx (int, optional): Session index for labeling purposes.
-    - session (object, optional): Session object containing metadata. Expected to have attributes 'rat', 'day', and 'epoch'.
-    - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
+    - session (object, optional): Session object containing metadata. 
+    Expected to have attributes 'rat', 'day', and 'epoch'.
+    - save_path (str, optional): Path to save the plot. If None, 
+    the plot is displayed.
     - tag (str, optional): Additional tag for the plot title and filename.
-    - is_moving_avg (bool, optional): Indicates if the data provided are moving averaged.
+    - is_moving_avg (bool, optional): Indicates if the data provided 
+    are moving averaged.
     - SI_score (float, optional): SI score to display on the plot.
     - decode_err (float, optional): Decode error to display on the plot.
     - pdf (PdfPages, optional): PdfPages object to save the plot in a PDF.
@@ -1105,8 +941,18 @@ def plot_Hs_over_time(est_H=None, decode_H=None, behav_var=None, behav_var_name=
     plt.close(fig)  # Close the figure to free memory
 
 
-def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=None, session=None, 
-                      save_path=None, tag=None, SI_score=None, decode_err=None,pdf=None):
+def plot_Hs_over_laps(
+    est_H=None,
+    decode_H=None,
+    lap_number=None,
+    session_idx=None,
+    session=None,
+    save_path=None,
+    tag=None,
+    SI_score=None,
+    decode_err=None,
+    pdf=None,
+):
     """
     Plots two H values against lap numbers, optionally annotating with session information and saving the plot.
     
@@ -1168,7 +1014,8 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
     
     # Add text annotation in the top-left corner
     ax.text(0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=12,
-            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5))
+            verticalalignment='top', bbox=dict(boxstyle='round,pad=0.5', 
+            facecolor='white', alpha=0.5))
     
     plt.xlabel('Lap Number', fontsize=14)
     plt.ylabel('H Value', fontsize=14)
@@ -1176,7 +1023,8 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
     
     if session_idx is not None and session is not None:
         # Assuming session object has attributes: rat, day, epoch
-        title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+        title += (f'\nSession {session_idx}: Rat {session.rat}, 
+                  Day {session.day}, Epoch {session.epoch}')
         if tag is not None:
             title += f', Tag {tag}'
     elif tag is not None:
@@ -1210,8 +1058,22 @@ def plot_Hs_over_laps(est_H=None, decode_H=None, lap_number=None, session_idx=No
 
 
 
-def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, behav_var=None, session_idx=None, session=None, 
-                                  save_path=None, tag=None, SI_score=None, decode_err=None, mean_diff=None, std_diff=None,behav_var_name=None,pdf=None):
+def plot_Hs_over_laps_interactive(
+    est_H=None,
+    decode_H=None,
+    lap_number=None,
+    behav_var=None,
+    session_idx=None,
+    session=None,
+    save_path=None,
+    tag=None,
+    SI_score=None,
+    decode_err=None,
+    mean_diff=None,
+    std_diff=None,
+    behav_var_name=None,
+    pdf=None,
+):
     """
     Plots two H values against lap numbers using Plotly for interactivity, with markers colored based on a behavioral variable.
 
@@ -1371,10 +1233,22 @@ def plot_Hs_over_laps_interactive(est_H=None, decode_H=None, lap_number=None, be
         # Display the plot in the default web browser
         plot(fig)
 
-def plot_Hs_over_laps_interactive(est_H, decode_H, lap_number, behav_var=None, 
-                                  session_idx=None, session=None, save_path=None, tag=None, 
-                                  SI_score=None, decode_err=None, mean_diff=None, 
-                                  std_diff=None, behav_var_name=None, pdf=None):
+def plot_Hs_over_laps_interactive(
+    est_H,
+    decode_H,
+    lap_number,
+    behav_var=None,
+    session_idx=None,
+    session=None,
+    save_path=None,
+    tag=None,
+    SI_score=None,
+    decode_err=None,
+    mean_diff=None,
+    std_diff=None,
+    behav_var_name=None,
+    pdf=None,
+):
     """
     Plots Hs over laps interactively, handling cases where behav_var is not provided.
 
@@ -1475,8 +1349,20 @@ def plot_Hs_over_laps_interactive(est_H, decode_H, lap_number, behav_var=None,
 
 
 
-def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=None, session_idx=None, 
-                             session=None, save_path=None, tag=None, window_size=5,SI_score=None,decode_err=None,pdf=None):
+def plot_Hs_moving_avg(
+    est_H=None,
+    decode_H=None,
+    behav_var=None,
+    behav_var_name=None,
+    session_idx=None,
+    session=None,
+    save_path=None,
+    tag=None,
+    window_size=5,
+    SI_score=None,
+    decode_err=None,
+    pdf=None,
+):
     """
     Plots the moving averages of estimated hippocampal gain (est_H) against decoded gain (decode_H),
     with colors representing a behavioral variable (e.g., velocity).
@@ -1636,7 +1522,17 @@ def plot_Hs_moving_avg(est_H=None, decode_H=None, behav_var=None,behav_var_name=
     else:
         plt.show()
 
-def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_name=None,save_dir=None,session_idx=None,dimensions_3=False,pdf=None,num_used_clusters=None):
+def compute_SI_and_plot(
+    embeddings=None,
+    behav_var=None,
+    params=None,
+    behav_var_name=None,
+    save_dir=None,
+    session_idx=None,
+    dimensions_3=False,
+    pdf=None,
+    num_used_clusters=None,
+):
 
     """ 
     params: 
@@ -1717,18 +1613,21 @@ def compute_SI_and_plot(embeddings=None,behav_var=None,params=None,behav_var_nam
 
     return SI
 
-def plot_decoded_var_and_true(decoded_var, behav_var, 
-                              indices=range(200),
-                              xlabel='Time (s)', 
-                              ylabel1='H Decoded from Manifold', 
-                              ylabel2='Ground Truth H', 
-                              title='H Decoded from Manifold vs Ground Truth H', 
-                              legend_labels=None,
-                              save_path=None,
-                              figsize=(12, 6),
-                              session_idx=None,
-                              behav_var_name=None,
-                              pdf=None):
+def plot_decoded_var_and_true(
+    decoded_var,
+    behav_var,
+    indices=range(200),
+    xlabel="Time (s)",
+    ylabel1="H Decoded from Manifold",
+    ylabel2="Ground Truth H",
+    title="H Decoded from Manifold vs Ground Truth H",
+    legend_labels=None,
+    save_path=None,
+    figsize=(12, 6),
+    session_idx=None,
+    behav_var_name=None,
+    pdf=None,
+):
     """
     Plots decoded_var and behav_var over specified indices.
 
@@ -1815,7 +1714,8 @@ def plot_decoded_var_and_true(decoded_var, behav_var,
 
 def get_var_over_lap(var=None, true_angle=None):
     """
-    Computes the lap number for each H value based on true_angle and returns the paired and sorted arrays.
+    Computes the lap number for each H value based 
+    on true_angle and returns the paired and sorted arrays.
     
     Parameters:
     - var: array-like, shape (n,)
@@ -1832,7 +1732,8 @@ def get_var_over_lap(var=None, true_angle=None):
         The lap_number array sorted in ascending order.
     
     Raises:
-    - ValueError: If var and true_angle are not provided or have different lengths.
+    - ValueError: If var and true_angle are not provided or 
+    have different lengths.
     """
 
     #make same size
@@ -1855,10 +1756,16 @@ def get_var_over_lap(var=None, true_angle=None):
     return lap_number, sorted_var, sorted_lap_number
 
 
-def plot_and_save_behav_vars(binned_hipp_angle=None, binned_true_angle=None, binned_est_gain=None,
-                             save_dir=None, session_idx=None):
+def plot_and_save_behav_vars(
+    binned_hipp_angle=None,
+    binned_true_angle=None,
+    binned_est_gain=None,
+    save_dir=None,
+    session_idx=None,
+):
     """
-    Plots binned hippocampal angle, true angle, and estimated gain on the same figure and saves the plot.
+    Plots binned hippocampal angle, true angle,
+    and estimated gain on the same figure and saves the plot.
 
     Parameters:
     - binned_hipp_angle_rad (array-like): Binned hippocampal angles in radians.
@@ -2012,13 +1919,15 @@ def plot_scatter(data, x_key, y_key, x_label, y_label, title):
     plt.show()
 
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy import signal
-from scipy.interpolate import interp1d
 
-def plot_spatial_spectrogram(H=None, lap_numbers=None, save_path=None, behav_var_name=None,num_segments_per_lap=10):
+
+def plot_spatial_spectrogram(
+    H=None,
+    lap_numbers=None,
+    save_path=None,
+    behav_var_name=None,
+    num_segments_per_lap=10,
+):
     # Input validation
     if H is None or lap_numbers is None:
         raise ValueError("H and lap_numbers must both be provided.")

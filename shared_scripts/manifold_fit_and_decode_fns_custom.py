@@ -11,10 +11,17 @@ from pandas import cut
 from sklearn.cluster import KMeans
 from scipy.optimize import minimize
 from sklearn.neighbors import NearestNeighbors
-from sklearn.manifold import Isomap
 
+
+import sys
+import os
+sys.path.append(os.path.join(os.path.dirname(__file__), '../shared_scripts'))
 import angle_fns as af
-import fit_helper_fns as fhf
+import shared_scripts.fit_helper_fns_custom as fhf
+from sklearn.cluster import DBSCAN
+from sklearn.neighbors import KernelDensity
+from sklearn_extra.cluster import KMedoids
+from functools import partial
 
 class PiecewiseLinearFit:
     '''Fits a piecewise linear curve to passed data. The curve runs through
@@ -33,19 +40,44 @@ class PiecewiseLinearFit:
         self.tt = np.arange(0, 1 + params['dalpha'] / 2., params['dalpha'])
         self.t_bins, self.t_int_idx, self.t_rsc = self.global_to_local_coords()
 
-    def get_new_initial_knots(self, method='kmeans'):
+    def get_new_initial_knots(self, method='kmedoids'): #edited from Chaudhuri et al.
         '''Place the initial knots for the optimization to use.'''
-        print(f"Initial knot method: {method}")
-        if method == 'kmeans':
+        print(f"method: {method}")
+        if method == 'dbscan':
+            print("Doing DBSCAN initial clustering")
+            clustering = DBSCAN(eps=0.1, min_samples=6).fit(self.data_to_fit)
+            labels = clustering.labels_
+            unique_labels = set(labels)
+            unique_labels.discard(-1)  # Remove noise label
+            cluster_centers = []
+            print(f"DBSCAN labels: {labels}")
+            print(f"Unique valid labels (excluding noise): {unique_labels}")
+
+            for label in unique_labels:
+                cluster_points = self.data_to_fit[labels == label]
+                cluster_center = np.mean(cluster_points, axis=0)
+                cluster_centers.append(cluster_center)
+            cluster_centers = np.array(cluster_centers)
+            # Adjust the number of knots as needed
+            if len(cluster_centers) >= self.nKnots:
+                return cluster_centers[:self.nKnots]
+            else:
+                # Sample additional knots from high-density regions
+                additional_knots = self.data_to_fit[np.random.choice(len(self.data_to_fit), self.nKnots - len(cluster_centers), replace=False)]
+                return np.vstack([cluster_centers, additional_knots])
+        elif method == 'kmeans':
+            print("Doing K-Means initial clustering")
             kmeans = KMeans(n_clusters=self.nKnots, max_iter=3000).fit(self.data_to_fit)
             return kmeans.cluster_centers_
-        # elif method == 'isomap':
-        #     isomap = Isomap(n_components=1)
-        #     data_1d = isomap.fit_transform(self.data_to_fit)
-        #     # Select knots evenly along the 1D manifold
-        #     indices = np.linspace(0, len(data_1d) - 1, self.nKnots, dtype=int)
-        #     return self.data_to_fit[indices]
+        elif method == 'kmedoids':
+            print("Doing K-Medoids initial clustering")
+            # Initialize K-Medoids with desired parameters
+            kmedoids = KMedoids(n_clusters=self.nKnots, method='pam', metric='euclidean', random_state=42)
+            kmedoids.fit(self.data_to_fit)
+            print(f"cluster centers: {kmedoids.cluster_centers_}")
+            return kmedoids.cluster_centers_
         else:
+            print("hi")
             print('Unknown method')
 
     def order_knots(self, knots, method='nearest'):
@@ -76,49 +108,127 @@ class PiecewiseLinearFit:
                 next_idx = np.argmax(wt_per_len)
             ord_knots[i] = rem_knots[next_idx].copy()
         return ord_knots
+    
+    def compute_curvature(self, loop_knots):
+        segments = loop_knots[1:] - loop_knots[:-1]  # Shape: (n_knots, n_dims)
+        directions = segments / (np.linalg.norm(segments, axis=1)[:, np.newaxis]+1e-7) # Normalize
+        delta_directions = directions[1:] - directions[:-1]  # Changes in direction
+        curvature = np.sum(np.linalg.norm(delta_directions, axis=1)**2)  # Sum of squared changes
+        return curvature
+    
+    def huber_loss(self, dists, delta):
+            return np.where(
+                dists <= delta,
+                0.5 * dists ** 2,
+                delta * (dists - 0.5 * delta)
+    )
 
-    def fit_data(self, fit_params):
+    def fit_data(self, fit_params, verbose=False):
         '''Main function to fit the data. Starting from the initial knots
         move them to minimize the distance of points to the curve, along with
         some (optional) penalty.'''
+        print("fit_params in fit_data:", fit_params)
 
         save_dict = {'fit_params': fit_params}
 
-        def cost_fn(flat_knots, penalty_params = fit_params):
+        def cost_fn(flat_knots, fit_params,verbose=False):
+
+            #print(f"fit params inside cost_fn: {fit_params}")
+            # Reshape flat_knots to (nKnots, nDims)
             knots = np.reshape(flat_knots.copy(), (self.nKnots, self.nDims))
-            loop_knots = fhf.loop_knots(np.reshape(flat_knots.copy(), (self.nKnots, self.nDims)))
-            fit_curve = loop_knots[self.t_int_idx] + (loop_knots[self.t_int_idx + 1] -
-                                            loop_knots[self.t_int_idx]) * self.t_rsc[:, np.newaxis]
+            
+            # Generate looped knots
+            loop_knots = fhf.loop_knots(knots)
+            
+            # Generate the fit curve based on local coordinates
+            fit_curve = loop_knots[self.t_int_idx] + (loop_knots[self.t_int_idx + 1] - loop_knots[self.t_int_idx]) * self.t_rsc[:, np.newaxis]
+            
+            # Find nearest neighbors from data to the fit curve
             neighbgraph = NearestNeighbors(n_neighbors=1).fit(fit_curve)
             dists, inds = neighbgraph.kneighbors(self.data_to_fit)
+
+            mean_dists = np.mean(dists)
+            threshold = 1.5 * mean_dists
+            filtered_dists = dists[dists < threshold]
+            inds = inds[dists < threshold]
+
             
-            if penalty_params['penalty_type'] == 'none':
-                cost = np.sum(dists)
-            elif penalty_params['penalty_type'] == 'mult_len':
-                cost = np.sum(dists) * self.tot_len(loop_knots)
-            elif penalty_params['penalty_type'] == 'add_len': 
-                cost = np.mean(dists) + penalty_params['len_coeff'] * self.tot_len(loop_knots)
-            elif penalty_params['penalty_type'] == 'curvature': 
-                # Compute curvature penalty
-                segments = loop_knots[1:] - loop_knots[:-1]
-                norms = np.linalg.norm(segments, axis=1)[:, np.newaxis]
-                norms[norms == 0] = 1e-8
-                unit_vectors = segments / norms
-                diffs = unit_vectors[1:] - unit_vectors[:-1]
-                curvature_penalty = np.sum(np.linalg.norm(diffs, axis=1) ** 2)
-                curvature_coeff = penalty_params['curvature_coeff']
-                cost = np.sum(dists) + penalty_params['len_coeff'] * self.tot_len(loop_knots) + curvature_coeff * curvature_penalty
-            return cost
-        
+            # Compute data density using Kernel Density Estimation
+            kde = KernelDensity(kernel='gaussian', bandwidth=2.0).fit(self.data_to_fit)
+            log_density_data = kde.score_samples(self.data_to_fit)
+            density_data = np.exp(log_density_data)
+            weights = density_data / np.sum(density_data)
+            
+            # Compute weighted distances using Huber loss
+            weighted_dists = filtered_dists.flatten() * weights[inds.flatten()]
+            delta = fit_params.get('delta', 0.1)  # Adjust delta as needed
+            
+            # Huber loss computation
+            huber_loss = np.where(
+                weighted_dists <= delta,
+                0.5 * weighted_dists ** 2,
+                delta * (weighted_dists - 0.5 * delta)
+            )
+            
+
+
+            # Base cost: sum of Huber losses
+            cost = np.sum(huber_loss)
+            if(verbose):
+                print(f"dist penalty: {cost}")
+
+            #print(f"PENALTY PARAMS: {fit_params['penalty_type']}")
+            
+            # Apply penalties based on penalty_type
+            if fit_params['penalty_type'] == 'none':
+                return cost
+            elif fit_params['penalty_type'] == 'mult_len':
+                cost *= self.tot_len(loop_knots)
+                return cost
+            elif fit_params['penalty_type'] == 'add_len':
+                cost += fit_params['len_coeff'] * self.tot_len(loop_knots)
+                return cost
+            elif fit_params['penalty_type'] == 'curvature':
+                curvature_penalty = fit_params['curvature_coeff'] * self.compute_curvature(loop_knots)
+                if(verbose):
+                    print(f"curvature penalty is: {curvature_penalty}")
+                length_penalty = fit_params['len_coeff'] * self.tot_len(loop_knots)
+                if(verbose):
+                    print(f"length penalty is: {length_penalty}")
+                # Density penalty
+                log_density_knots = kde.score_samples(knots)
+                if(verbose):
+                    print(f"log density of knots: {log_density_knots}")
+                density_penalty = fit_params['density_coeff'] * np.sum(-log_density_knots)
+                if(verbose):
+                    print(f"density penalty is: {density_penalty}")
+                cost += curvature_penalty + length_penalty + density_penalty
+                return cost
+            else:
+                raise ValueError(f"Unknown penalty type: {fit_params['penalty_type']}")
+
         init_knots = fit_params['init_knots']
+        if(verbose):
+            print("init_knots shape:", init_knots.shape)
+
         flat_init_knots = init_knots.flatten()
-        fit_result = minimize(cost_fn, flat_init_knots, method='Nelder-Mead',
-                              options={'maxiter': 3000})
-        # print fit_result.fun
+        if(verbose):
+            print("flat_init_knots size:", flat_init_knots.size)
+
+        bound_cost_fn = partial(cost_fn, fit_params=fit_params,verbose=verbose)
+
+        fit_result = minimize(
+            bound_cost_fn,
+            flat_init_knots,
+            method='Nelder-Mead',
+            options={'maxiter': 100},
+        )
+
         knots = np.reshape(fit_result.x.copy(), (self.nKnots, self.nDims))
-        save_dict = {'knots' : knots, 'err' : fit_result.fun,
-            'init_knots' : init_knots}
+        save_dict = {'knots': knots, 'err': fit_result.fun, 'init_knots': init_knots}
         self.saved_knots.append(save_dict)
+
+
 
     # Various utility functions
     def global_to_local_coords(self):
@@ -176,7 +286,8 @@ def fit_manifold(data_to_fit, fit_params):
     unord_knots = fitter.get_new_initial_knots()
     init_knots = fitter.order_knots(unord_knots, method=fit_params['knot_order'])
     curr_fit_params = {'init_knots' : init_knots, 'penalty_type' : 
-        fit_params['penalty_type']}
+        fit_params['penalty_type'],  'len_coeff': fit_params['len_coeff'], 
+        'curvature_coeff': fit_params['curvature_coeff']}
     fitter.fit_data(curr_fit_params)
     fit_results = dict(fit_params)
     fit_results['init_knots'] = init_knots
@@ -194,9 +305,8 @@ def decode_from_passed_fit(data_to_decode, fit_coords, fit_curve, ref_angles):
     # aren't identical, though I suspect it won't matter (check this)
     # loop_tt, loop_curve = fit_results['tt'], fit_results['curve']
 
-    # Multiply coords by 2*pi so that we can compare with angles
     unshft_coords = fhf.get_closest_manifold_coords(fit_curve, 
-        2*np.pi*fit_coords, data_to_decode)
+        fit_coords, data_to_decode)
     dec_angle, mse, shift, flip = af.shift_to_match_given_trace(unshft_coords,
         ref_angles)
     return dec_angle, mse

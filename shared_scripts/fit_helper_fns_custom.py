@@ -2,7 +2,7 @@
 Various functions to help with the decoding.
 '''
 
-from __future__ import division
+
 import numpy as np
 from numpy import linalg as la
 from pandas import cut
@@ -52,7 +52,7 @@ def get_coord_bins_from_knots(knot_list):
     segment_lens = [la.norm(y - x) for x, y in zip(knot_list[:-1], knot_list[1:])]
     bin_right_edges = np.cumsum(segment_lens) / np.sum(segment_lens)
     if bin_right_edges[-1] < 1:
-        print 'Last one is <1, ', bin_right_edges[-1]
+        print('Last one is <1, ', bin_right_edges[-1])
         bin_right_edges[-1] = 1
     return np.concatenate(([0], bin_right_edges))
 
@@ -72,25 +72,53 @@ def get_linear_interp_general(knots, param_bins, param_vals):
     return ret_curve
 
 def get_curve_from_knots(knot_list, bin_type, dt=0.005):
-    '''Turns knot_list into a curve in the embedding space along with 
-    appropriate coordinates. knots should be looped if we want a closed 
-    curve.
+    """
+    Turns knot_list into a curve in the embedding space along with 
+    appropriate coordinates. Knots should be looped if we want a closed curve.
     eq_int option is there for historical reasons, but isn't used.
-    '''
+    """
+    # Validate the number of knots
+    if len(knot_list) < 3:
+        print(f"[WARNING] Insufficient knots: {len(knot_list)} knots provided. Skipping.")
+        return None, None
 
+    # Check for duplicate or very close knots
+    min_distance = np.min(np.linalg.norm(np.diff(knot_list, axis=0), axis=1))
+    if min_distance < 1e-5:  # Threshold for 'too close'
+        print(f"[WARNING] Knots are too close: Minimum distance between knots is {min_distance}. Skipping.")
+        return None, None
+
+    # Generate time coordinates
     tt = np.arange(0, 1 + 1e-10, dt)
-    if bin_type == 'eq_int':
-        # I.e., line segment between each pair of knots gets equal consideration
-        t_bins = np.linspace(0, 1., len(knot_list))
-    elif bin_type == 'eq_vel':
-        # Line segment between each pair of knots receives weight according
-        # to distance in embedding or neural space
-        t_bins = get_coord_bins_from_knots(knot_list)
-    else:
-        print 'Unknown bin type'
-        return np.nan
-    curve = get_linear_interp_general(knot_list, t_bins, tt)
+
+    # Determine bin edges based on bin_type
+    try:
+        if bin_type == 'eq_int':
+            # Line segment between each pair of knots gets equal consideration
+            t_bins = np.linspace(0, 1., len(knot_list))
+        elif bin_type == 'eq_vel':
+            # Line segment between each pair of knots receives weight according
+            # to distance in embedding or neural space
+            t_bins = get_coord_bins_from_knots(knot_list)
+        else:
+            print("[ERROR] Unknown bin type. Skipping.")
+            return None, None
+    except Exception as e:
+        print(f"[ERROR] Error in determining t_bins: {e}. Skipping.")
+        return None, None
+
+    # Generate curve using linear interpolation
+    try:
+        curve = get_linear_interp_general(knot_list, t_bins, tt)
+    except ValueError as e:
+        if "Bin edges must be unique" in str(e):
+            print(f"[WARNING] Invalid bin edges due to duplicate values. Skipping. Error: {e}")
+            return None, None
+        else:
+            raise  # Re-raise unexpected exceptions
+
     return tt, curve
+
 
 '''Set of functions to find distances and nearest neighbors between points and a set. 
 Primarily used in ordering the knots, though I used one of these in an earlier version
