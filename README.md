@@ -2,9 +2,9 @@
 
 This README provides an overview my project, its purpose, the methods and libraries it relies on, and guidelines for running and reproducing the analysis. The code is designed for analyzing spike rate neural data, generating low-dimensional embeddings using CEBRA, fitting principal curves, and performing decoding and spectral analyses to understand neural manifolds in rat navigation tasks.
 
-Main Code File is real_data/run_embed_calc_H.ipynb
-Helper functions file is in cebra_utils.py
-Helper functions from Chaudhuri et al., is in real_data/Shared_Scripts/Spud_Code
+**Main Code File** is real_data/run_embed_calc_H.ipynb <br />
+Helper functions file is in cebra_utils.py  <br />
+Helper functions from Chaudhuri et al., is in real_data/Shared_Scripts/Spud_Code  <br />
 Helper functions from Sebastien et al., is in real_data/SI_code
 
 ## Overview of the Code
