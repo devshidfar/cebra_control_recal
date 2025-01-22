@@ -1,0 +1,50 @@
+{
+    "paths": {
+      "data": {
+        "optic_flow": "/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/mat_code_and_data/data/NN_opticflow_dataset.mat",
+        "landmark": "/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/mat_code_and_data/data/expt_landmark.mat"
+      },
+      "results": "/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results",
+      "models": "/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/models"
+    },
+    "embedding": {
+      "output_dimension": 3,
+      "temperature_list": [1],
+      "max_iterations": 1000,
+      "batch_size": 512
+    },
+    "experiment": {
+      "bin_sizes": [1],
+      "velocity_threshold": 5,
+      "max_num_reruns": 1,
+      "remove_outliers": true
+    },
+    "principal_curve": {
+      "dalpha": 0.005,
+      "knot_order": "nearest",
+      "penalty_type": "curvature",
+      "nKnots": 20,
+      "curvature_coeff": 5,
+      "len_coeff": 2,
+      "density_coeff": 2,
+      "delta": 0.1
+    },
+    "SI_params": {
+      "n_bins": 10,
+      "n_neighbors": 15,
+      "discrete_label": false,
+      "num_shuffles": 10,
+      "verbose": false
+    },
+    "plots": {
+      "save_animations": true,
+      "save_static": true,
+      "plot_colors": {
+        "decoded": "red",
+        "true": "black",
+        "hipp": "blue"
+      },
+      "interactive": true
+    }
+  }
+  

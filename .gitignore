@@ -14,3 +14,5 @@
 *.DS_store
 *.pkl
 *.pdf
+.history/
+.DS_Store

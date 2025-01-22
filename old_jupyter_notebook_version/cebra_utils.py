@@ -22,7 +22,6 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import pairwise_distances
 import matplotlib.gridspec as gridspec
 import pandas as pd
-from sklearn.neighbors import NearestNeighbors
 import matplotlib.colors as mcolors
 from matplotlib.cm import ScalarMappable
 sys.path.append('/Users/devenshidfar/Desktop/Masters/NRSC_510B/'
@@ -1397,16 +1396,6 @@ def plot_Hs_moving_avg(
     decode_gain_trimmed = decode_H[:min_length]
     behav_var_trimmed = behav_var[:min_length]
     times = np.arange(min_length)  # Time is just the index
-    
-    # Optional: Handle NaNs and Infs if necessary
-    # Uncomment and adjust the following lines if your data contains NaNs or Infs
-    # valid_indices = ~np.isnan(est_gain_trimmed) & ~np.isnan(decode_gain_trimmed) & \
-    #                 ~np.isnan(behav_var_trimmed) & ~np.isinf(est_gain_trimmed) & \
-    #                 ~np.isinf(decode_gain_trimmed) & ~np.isinf(behav_var_trimmed)
-    # est_gain_trimmed = est_gain_trimmed[valid_indices]
-    # decode_gain_trimmed = decode_gain_trimmed[valid_indices]
-    # behav_var_trimmed = behav_var_trimmed[valid_indices]
-    # times = times[valid_indices]
     
     # Check if the trimmed arrays are long enough for the moving average
     if min_length < window_size:
