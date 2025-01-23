@@ -33,10 +33,46 @@ from matplotlib.widgets import Slider
 import mpld3
 from ripser import ripser
 from persim import plot_diagrams
+from dataclasses import dataclass, asdict
 
 # =============== #
 # CLASS: CEBRAUtils
 # =============== #
+
+@dataclass
+class SessionData:
+    expt_file: any  # Replace `any` with the actual type if known
+    specifier: np.ndarray
+    neural_data: np.ndarray
+    embeddings_3d: np.ndarray
+    H0_value: float
+    H1_value: float
+    betti_0: int
+    betti_1: int
+    principal_curves_3d: np.ndarray
+    curve_params_3d: any  # Replace `any` with the actual type if known
+    binned_hipp_angle: np.ndarray
+    binned_true_angle: np.ndarray
+    binned_est_gain: np.ndarray
+    binned_high_vel: np.ndarray
+    decoded_angles: np.ndarray
+    filtered_decoded_angles_unwrap: np.ndarray
+    decode_H: np.ndarray
+    session_idx: int
+    rat: any  # Replace `any` with the actual type if known
+    day: any  # Replace `any` with the actual type if known
+    epoch: any  # Replace `any` with the actual type if known
+    num_skipped_clusters: int
+    num_used_clusters: int
+    avg_skipped_cluster_iq: float
+    avg_used_cluster_iq: float
+    mean_dist_to_spline: float
+    mean_angle_diff: float
+    shuffled_mean_angle_diff: float
+    SI_score_hipp: float
+    SI_score_true: float
+    mean_H_difference: float
+    std_H_difference: float
 
 class CEBRAUtils:
     """
@@ -1293,6 +1329,8 @@ class CEBRAAnalysis:
         """
         import scipy.io
 
+        self.sessions_data = []
+
         # --- Load data ---
         path_flow = os.path.join(
             '/Users/devenshidfar/Desktop/Masters/NRSC_510B/',
@@ -1325,7 +1363,7 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 42
-            self.optic_flow_num_trials = 1
+            self.optic_flow_num_trials = 2
             self.optic_flow_control_point = 35
 
         self.run_persistent_homology = run_persistent_homology
@@ -1391,87 +1429,107 @@ class CEBRAAnalysis:
 
     def append_nan_values(self, session_idx, session):
         """
-        Appends NaN values and session-specific metadata to all attributes.
+        Appends a SessionData instance with NaN values for missing data.
         """
-        self.expt_file.append(session)
-        self.all_neural_data.append(np.nan)
-        self.all_embeddings_3d.append(np.nan)
-        self.H0_value.append(np.nan)
-        self.H1_value.append(np.nan)
-        self.all_betti_0.append(np.nan)
-        self.all_betti_1.append(np.nan)
-        self.all_principal_curves_3d.append(np.nan)
-        self.all_curve_params_3d.append(np.nan)
-        self.all_binned_hipp_angle.append(np.nan)
-        self.all_binned_true_angle.append(np.nan)
-        self.all_binned_est_gain.append(np.nan)
-        self.all_binned_high_vel.append(np.nan)
-        self.all_decoded_angles.append(np.nan)
-        self.all_filtered_decoded_angles_unwrap.append(np.nan)
-        self.all_decode_H.append(np.nan)
-        self.all_session_idx.append(session_idx)
-        self.all_rat.append(session.rat)
-        self.all_day.append(session.day)
-        self.all_epoch.append(session.epoch)
-        self.all_num_skipped_clusters.append(np.nan)
-        self.all_num_used_clusters.append(np.nan)
-        self.all_avg_skipped_cluster_isolation_quality.append(np.nan)
-        self.all_avg_used_cluster_isolation_quality.append(np.nan)
-        self.all_mean_distance_to_principal_curve.append(np.nan)
-        self.all_mean_angle_difference.append(np.nan)
-        self.all_shuffled_mean_angle_difference.append(np.nan)
-        self.all_SI_score_hipp.append(np.nan)
-        self.all_SI_score_true.append(np.nan)
-        # self.all_mse_decode_vs_true.append(np.nan)
-        self.all_mean_H_difference.append(np.nan)
-        self.all_std_H_difference.append(np.nan)
+        session_data = SessionData(
+            expt_file=session,
+            specifier=np.nan,
+            neural_data=np.nan,
+            embeddings_3d=np.nan,
+            H0_value=np.nan,
+            H1_value=np.nan,
+            betti_0=np.nan,
+            betti_1=np.nan,
+            principal_curves_3d=np.nan,
+            curve_params_3d=np.nan,
+            binned_hipp_angle=np.nan,
+            binned_true_angle=np.nan,
+            binned_est_gain=np.nan,
+            binned_high_vel=np.nan,
+            decoded_angles=np.nan,
+            filtered_decoded_angles_unwrap=np.nan,
+            decode_H=np.nan,
+            session_idx=session_idx,
+            rat=session.rat,
+            day=session.day,
+            epoch=session.epoch,
+            num_skipped_clusters=np.nan,
+            num_used_clusters=np.nan,
+            avg_skipped_cluster_iq=np.nan,
+            avg_used_cluster_iq=np.nan,
+            mean_dist_to_spline=np.nan,
+            mean_angle_diff=np.nan,
+            shuffled_mean_angle_diff=np.nan,
+            SI_score_hipp=np.nan,
+            SI_score_true=np.nan,
+            mean_H_difference=np.nan,
+            std_H_difference=np.nan
+        )
+        self.sessions_data.append(session_data)
+
     
+    # def get_results_dict(self):
+    #     """
+    #     Returns the final results of the analysis as a dictionary
+    #     suitable for saving to .mat or usage elsewhere.
+    #     """
+    #     if(self.include_land_off):
+    #         specifier = "full_trial_included"
+    #     else:
+    #         specifier = "only_vis_cue_included"
+
+    #     data_dict = {
+    #         'expt_file': self.expt_file,
+    #         'specifier': np.array([specifier], dtype=object),
+    #         'neural_data': self.all_neural_data,
+    #         'embeddings_3d': self.all_embeddings_3d,
+    #         'H0_value': self.H0_value,
+    #         'H1_value': self.H1_value,
+    #         'betti_0': self.all_betti_0,
+    #         'betti_1': self.all_betti_1,
+    #         'principal_curves_3d': self.all_principal_curves_3d,
+    #         'curve_params_3d': self.all_curve_params_3d,
+    #         'binned_hipp_angle': self.all_binned_hipp_angle,
+    #         'binned_true_angle': self.all_binned_true_angle,
+    #         'binned_est_gain': self.all_binned_est_gain,
+    #         'binned_high_vel': self.all_binned_high_vel,
+    #         'decoded_angles': self.all_decoded_angles,
+    #         'filtered_decoded_angles_unwrap': self.all_filtered_decoded_angles_unwrap,
+    #         'decode_H': self.all_decode_H,
+    #         'session_idx': self.all_session_idx,
+    #         'rat': self.all_rat,
+    #         'day': self.all_day,
+    #         'epoch': self.all_epoch,
+    #         'num_skipped_clusters': self.all_num_skipped_clusters,
+    #         'num_used_clusters': self.all_num_used_clusters,
+    #         'avg_skipped_cluster_iq': self.all_avg_skipped_cluster_isolation_quality,
+    #         'avg_used_cluster_iq': self.all_avg_used_cluster_isolation_quality,
+    #         'mean_dist_to_spline': self.all_mean_distance_to_principal_curve,
+    #         'mean_angle_diff': self.all_mean_angle_difference,
+    #         'shuffled_mean_angle_diff': self.all_shuffled_mean_angle_difference,
+    #         'SI_score_hipp': self.all_SI_score_hipp,
+    #         'SI_score_true': self.all_SI_score_true,
+    #         # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
+    #         'mean_H_difference': self.all_mean_H_difference,
+    #         'std_H_difference': self.all_std_H_difference
+    #     }
+    #     return data_dict
     def get_results_dict(self):
         """
-        Returns the final results of the analysis as a dictionary
-        suitable for saving to .mat or usage elsewhere.
+        Returns the final results of the analysis as a structured dictionary
+        where each session is a separate struct.
         """
-        if(self.include_land_off):
-            specifier = "full_trial_included"
-        else:
-            specifier = "only_vis_cue_included"
+        # Convert each SessionData instance to a dictionary
+        sessions_dict_list = [asdict(session) for session in self.sessions_data]
+        
 
         data_dict = {
-            'expt_file': self.expt_file,
-            'specifier': np.array([specifier], dtype=object),
-            'neural_data': self.all_neural_data,
-            'embeddings_3d': self.all_embeddings_3d,
-            'H0_value': self.H0_value,
-            'H1_value': self.H1_value,
-            'betti_0': self.all_betti_0,
-            'betti_1': self.all_betti_1,
-            'principal_curves_3d': self.all_principal_curves_3d,
-            'curve_params_3d': self.all_curve_params_3d,
-            'binned_hipp_angle': self.all_binned_hipp_angle,
-            'binned_true_angle': self.all_binned_true_angle,
-            'binned_est_gain': self.all_binned_est_gain,
-            'binned_high_vel': self.all_binned_high_vel,
-            'decoded_angles': self.all_decoded_angles,
-            'filtered_decoded_angles_unwrap': self.all_filtered_decoded_angles_unwrap,
-            'decode_H': self.all_decode_H,
-            'session_idx': self.all_session_idx,
-            'rat': self.all_rat,
-            'day': self.all_day,
-            'epoch': self.all_epoch,
-            'num_skipped_clusters': self.all_num_skipped_clusters,
-            'num_used_clusters': self.all_num_used_clusters,
-            'avg_skipped_cluster_iq': self.all_avg_skipped_cluster_isolation_quality,
-            'avg_used_cluster_iq': self.all_avg_used_cluster_isolation_quality,
-            'mean_dist_to_spline': self.all_mean_distance_to_principal_curve,
-            'mean_angle_diff': self.all_mean_angle_difference,
-            'shuffled_mean_angle_diff': self.all_shuffled_mean_angle_difference,
-            'SI_score_hipp': self.all_SI_score_hipp,
-            'SI_score_true': self.all_SI_score_true,
-            # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
-            'mean_H_difference': self.all_mean_H_difference,
-            'std_H_difference': self.all_std_H_difference
+            'sessions': sessions_dict_list,
+            'specifier': "full_trial_included" if self.include_land_off else "only_vis_cue_included",
         }
+        
         return data_dict
+
 
     def run_analysis(self):
         """
@@ -1868,7 +1926,7 @@ class CEBRAAnalysis:
                             if skip_session:
                                 print("[INFO] not enough embedding points "
                                         "Skipping the entire session and writing NaNs.")
-                                self.append_nan_values(session_idx,session)
+                                self.append_nan(self,session_idx,session)
 
                                 # Continue to the next session if not enough embedding points
                                 skip_session = False
@@ -1925,7 +1983,7 @@ class CEBRAAnalysis:
                                 print("[INFO] Detected knots were too close or"
                                       "Skipping the entire session and writing NaNs.")
 
-                                self.append_nan_values(session_idx,session)
+                                self.append_nan_values(self, session_idx, session)
 
                                 # Continue to the next session if principal curve is None 
                                 continue
@@ -2133,6 +2191,7 @@ class CEBRAAnalysis:
                             )
 
                             # Save final results
+                            self.expt_file.append(session)
                             self.all_neural_data.append(neural_data)
                             self.all_embeddings_3d.append(embeddings_3d)
                             self.H0_value.append(H0_value)
@@ -2165,6 +2224,43 @@ class CEBRAAnalysis:
                             self.all_mean_H_difference.append(mean_H_diff)
                             self.all_std_H_difference.append(std_H_diff)
 
+                            session_data = SessionData(
+                                expt_file=session,
+                                specifier=np.nan,
+                                neural_data=neural_data,
+                                embeddings_3d=embeddings_3d,
+                                H0_value=H0_value,
+                                H1_value=H1_value,
+                                betti_0=betti_0,
+                                betti_1=betti_1,
+                                principal_curves_3d=principal_curve_3d,
+                                curve_params_3d=curve_params_3d,
+                                binned_hipp_angle=binned_hipp_angle_rad_unwrap,
+                                binned_true_angle=binned_true_angle_rad_unwrap,
+                                binned_est_gain=binned_est_gain,
+                                binned_high_vel=binned_high_vel,
+                                decoded_angles=decoded_angles_unwrap,
+                                filtered_decoded_angles_unwrap=filtered_decoded_angles_unwrap,
+                                decode_H=decode_H,
+                                session_idx=session_idx,
+                                rat=session.rat,
+                                day=session.day,
+                                epoch=session.epoch,
+                                num_skipped_clusters=num_skipped_cluster,
+                                num_used_clusters=num_used_cluster,
+                                avg_skipped_cluster_iq=avg_skipped_cluster_iq,
+                                avg_used_cluster_iq=avg_used_cluster_iq,
+                                mean_dist_to_spline=mean_dist_to_spline,
+                                mean_angle_diff=mean_angle_diff,
+                                shuffled_mean_angle_diff=shuffled_mean_angle_diff,
+                                SI_score_hipp=best_SI_score_hipp,
+                                SI_score_true=SI_score_true,
+                                mean_H_difference=mean_H_diff,
+                                std_H_difference=std_H_diff
+                            )
+                            
+                            self.sessions_data.append(session_data)
+
                         pdf.close()
 
                     
@@ -2180,7 +2276,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'landmarks_off'
+    save_folder = 'progression_check'
 
     #Run analysis with no including when landmarks/optic flow are off
     analysis_no_land_off = CEBRAAnalysis(
