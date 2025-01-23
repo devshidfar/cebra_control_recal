@@ -1284,7 +1284,7 @@ class CEBRAAnalysis:
     using the utility methods from CEBRAUtils.
     """
 
-    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False):
+    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,save_folder=None):
         """
         Loads data, sets up configuration, etc.
         """
@@ -1320,14 +1320,15 @@ class CEBRAAnalysis:
             self.landmark_sessions = []
             self.optic_flow_sessions = [35]
         else:
-            self.landmark_num_trials = 65
+            self.landmark_num_trials = 0
             self.landmark_control_point = 42
-            self.optic_flow_num_trials = 72
-            self.optic_flow_control_point = 40
+            self.optic_flow_num_trials = 2
+            self.optic_flow_control_point = 35
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
-        self.save_folder = 'landmark_off'
+        self.include_land_off = include_land_off
+        self.save_folder = save_folder
 
         # List of experiment definitions
         self.expts = [
@@ -1383,6 +1384,52 @@ class CEBRAAnalysis:
         # self.all_mse_decode_vs_true = []
         self.all_mean_H_difference = []
         self.all_std_H_difference = []
+    
+    def get_results_dict(self):
+        """
+        Returns the final results of the analysis as a dictionary
+        suitable for saving to .mat or usage elsewhere.
+        """
+        if(self.include_land_off):
+            specifier = "full_trial_included"
+        else:
+            specifier = "only_vis_cue_included"
+
+        data_dict = {
+            'specifier': specifier,
+            'neural_data': self.all_neural_data,
+            'embeddings_3d': self.all_embeddings_3d,
+            'H0_value': self.H0_value,
+            'H1_value': self.H1_value,
+            'betti_0': self.all_betti_0,
+            'betti_1': self.all_betti_1,
+            'principal_curves_3d': self.all_principal_curves_3d,
+            'curve_params_3d': self.all_curve_params_3d,
+            'binned_hipp_angle': self.all_binned_hipp_angle,
+            'binned_true_angle': self.all_binned_true_angle,
+            'binned_est_gain': self.all_binned_est_gain,
+            'binned_high_vel': self.all_binned_high_vel,
+            'decoded_angles': self.all_decoded_angles,
+            'filtered_decoded_angles_unwrap': self.all_filtered_decoded_angles_unwrap,
+            'decode_H': self.all_decode_H,
+            'session_idx': self.all_session_idx,
+            'rat': self.all_rat,
+            'day': self.all_day,
+            'epoch': self.all_epoch,
+            'num_skipped_clusters': self.all_num_skipped_clusters,
+            'num_used_clusters': self.all_num_used_clusters,
+            'avg_skipped_cluster_isolation_quality': self.all_avg_skipped_cluster_isolation_quality,
+            'avg_used_cluster_isolation_quality': self.all_avg_used_cluster_isolation_quality,
+            'mean_distance_to_principal_curve': self.all_mean_distance_to_principal_curve,
+            'mean_angle_difference': self.all_mean_angle_difference,
+            'shuffled_mean_angle_difference': self.all_shuffled_mean_angle_difference,
+            'SI_score_hipp': self.all_SI_score_hipp,
+            'SI_score_true': self.all_SI_score_true,
+            # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
+            'mean_H_difference': self.all_mean_H_difference,
+            'std_H_difference': self.all_std_H_difference
+        }
+        return data_dict
 
     def run_analysis(self):
         """
@@ -1431,13 +1478,21 @@ class CEBRAAnalysis:
                         f'session_{session_idx}'
                         )   
                         os.makedirs(session_base_path, exist_ok=True)
-
-                        SI_plots_path = os.path.join(session_base_path, 'SI_Plots')
-                        anim_save_file = os.path.join(session_base_path, '3d_Animations')
-                        spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms')
-                        param_plot_path = os.path.join(session_base_path, 'Param_Plots')
-                        H_plot_path = os.path.join(session_base_path, 'H_Plots')
-                        pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots')
+                        
+                        if self.include_land_off:
+                            SI_plots_path = os.path.join(session_base_path, 'SI_Plots',"full")
+                            anim_save_file = os.path.join(session_base_path, '3d_Animations',"full")
+                            spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms',"full")
+                            param_plot_path = os.path.join(session_base_path, 'Param_Plots',"full")
+                            H_plot_path = os.path.join(session_base_path, 'H_Plots',"full")
+                            pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots',"full")
+                        else:
+                            SI_plots_path = os.path.join(session_base_path, 'SI_Plots','vis_cue_only')
+                            anim_save_file = os.path.join(session_base_path, '3d_Animations','vis_cue_only')
+                            spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms','vis_cue_only')
+                            param_plot_path = os.path.join(session_base_path, 'Param_Plots','vis_cue_only')
+                            H_plot_path = os.path.join(session_base_path, 'H_Plots','vis_cue_only')
+                            pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots','vis_cue_only')
                         
 
                         paths_to_create = [SI_plots_path, anim_save_file, spectrogram_path, param_plot_path, H_plot_path]
@@ -1595,6 +1650,10 @@ class CEBRAAnalysis:
 
                         # Build neural data
                         neural_data = np.array(all_spikes).T
+
+                        if not self.include_land_off:
+                            neural_data = neural_data[:land_off_time_sec,:]
+                        
                         num_bins_neural = neural_data.shape[0]
                         num_bins_behavior = len(binned_est_gain)
                         if num_bins_neural != num_bins_behavior:
@@ -1609,7 +1668,6 @@ class CEBRAAnalysis:
                         print("neural data shape")
                         print(neural_data.shape[0])
 
-                        neural_data_land_off = neural_data[:land_off_time_sec,:]
                         
 
                         # For reruns if SI < threshold
@@ -1626,12 +1684,27 @@ class CEBRAAnalysis:
                         for temp in temperature_list:
                             rerun_count = 0
                             while rerun_count < self.max_num_reruns:
+                                # if self.include_land_off: # If you want to include the data points after the landmarks/optic flow turned off or not
+                                #     embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                #         neural_data_fit=neural_data,
+                                #         neural_data_embeddings=neural_data,
+                                #         output_dimension=3,
+                                #         temperature=temp
+                                #     )
+                                # else:
+                                #     embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                #         neural_data_fit=neural_data,
+                                #         neural_data_embeddings=neural_data_land_off,
+                                #         output_dimension=3,
+                                #         temperature=temp
+                                #     )
                                 embeddings_high_dim = CEBRAUtils.apply_cebra(
-                                    neural_data_fit=neural_data_land_off,
-                                    neural_data_embeddings=neural_data,
-                                    output_dimension=3,
-                                    temperature=temp
+                                        neural_data_fit=neural_data,
+                                        neural_data_embeddings=neural_data,
+                                        output_dimension=3,
+                                        temperature=temp
                                 )
+
                                 embeddings_3d = embeddings_high_dim.copy()
 
                                 # # Build mask for NaNs
@@ -2114,45 +2187,6 @@ class CEBRAAnalysis:
 
                         pdf.close()
 
-                        # After finishing all expts, compile data into a .mat file
-                        data_dict = {
-                            'neural_data': self.all_neural_data,
-                            'embeddings_3d': self.all_embeddings_3d,
-                            'H0_value': self.H0_value,
-                            'H1_value': self.H1_value,
-                            'betti_0': self.all_betti_0, 
-                            'betti_1': self.all_betti_1, 
-                            'principal_curves_3d': self.all_principal_curves_3d,
-                            'curve_params_3d': self.all_curve_params_3d,
-                            'binned_hipp_angle': self.all_binned_hipp_angle,
-                            'binned_true_angle': self.all_binned_true_angle,
-                            'binned_est_gain': self.all_binned_est_gain,
-                            'binned_high_vel': self.all_binned_high_vel,
-                            'decoded_angles': self.all_decoded_angles,
-                            'filtered_decoded_angles_unwrap': self.all_filtered_decoded_angles_unwrap,
-                            'decode_H': self.all_decode_H,
-                            'session_idx': self.all_session_idx,
-                            'rat': self.all_rat,
-                            'day': self.all_day,
-                            'epoch': self.all_epoch,
-                            'num_skipped_clusters': self.all_num_skipped_clusters,
-                            'num_used_clusters': self.all_num_used_clusters,
-                            'avg_skipped_cluster_isolation_quality': self.all_avg_skipped_cluster_isolation_quality,
-                            'avg_used_cluster_isolation_quality': self.all_avg_used_cluster_isolation_quality,
-                            'mean_distance_to_principal_curve': self.all_mean_distance_to_principal_curve,
-                            'mean_angle_difference': self.all_mean_angle_difference,
-                            'shuffled_mean_angle_difference': self.all_shuffled_mean_angle_difference,
-                            'SI_score_hipp': self.all_SI_score_hipp,
-                            'SI_score_true': self.all_SI_score_true,
-                            # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
-                            'mean_H_difference': self.all_mean_H_difference,
-                            'std_H_difference': self.all_std_H_difference
-                        }
-
-                        base_path = f'/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/'
-                        mat_filename = os.path.join(base_path, self.save_folder, f'{self.save_folder}_all_sessions_data.mat')
-                        savemat(mat_filename, data_dict)
-                        print(f"[INFO] Saved final data to {mat_filename}")
                     
                     except AttributeError as e:
                         print(f"[WARNING] Session {session_idx + 1} is invalid or missing. Skipping...")
@@ -2165,8 +2199,48 @@ def main():
     """
     Entry point to run the entire analysis.
     """
-    analysis = CEBRAAnalysis(session_choose=False, max_num_reruns=1, run_persistent_homology=False)
-    analysis.run_analysis()
+
+    save_folder = 'landmarks_off'
+
+    #Run analysis with no including when landmarks/optic flow are off
+    analysis_no_land_off = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=False,
+        save_folder=save_folder
+    )
+    analysis_no_land_off.run_analysis()
+    
+    # 2) Run analysis with including when landmarks/optic flow off
+    analysis_land_off = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        save_folder=save_folder
+    )
+    analysis_land_off.run_analysis()
+    
+    # Get their results as dictionaries:
+    dict_no_land_off = analysis_no_land_off.get_results_dict()
+    dict_land_off = analysis_land_off.get_results_dict()
+    
+    # Combine them into a single dictionary
+    # so that each run is stored under a different field/struct
+    combined_results = {
+        'no_land_off': dict_no_land_off,
+        'land_off': dict_land_off
+    }
+
+    
+
+    base_path = f'/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/'
+    mat_filename = os.path.join(base_path, save_folder, f'{save_folder}_all_sessions_data.mat')
+    savemat(mat_filename, combined_results)
+    print(f"[INFO] Saved final data to {mat_filename}")
+
+    print(f"[INFO] Successfully saved combined results")
 
 if __name__ == "__main__":
     main()
