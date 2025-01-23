@@ -212,8 +212,11 @@ class CEBRAUtils:
         of those differences, essentially a smoothing operation.
         """
         diffs = np.diff(data)
+        # Add the same value as the second element to keep the temporality as before
+        diffs = np.insert(diffs, 0, data[0]) 
         kernel = np.ones(window_size) / window_size
-        avg_diffs = np.convolve(diffs, kernel, mode='valid')
+        avg_diffs = np.convolve(diffs, kernel, mode='same')
+        # Output length = Input length - (Kernel Length - 1)
         return avg_diffs
 
     @staticmethod
@@ -1322,7 +1325,7 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 42
-            self.optic_flow_num_trials = 2
+            self.optic_flow_num_trials = 1
             self.optic_flow_control_point = 35
 
         self.run_persistent_homology = run_persistent_homology
@@ -1384,6 +1387,44 @@ class CEBRAAnalysis:
         # self.all_mse_decode_vs_true = []
         self.all_mean_H_difference = []
         self.all_std_H_difference = []
+        self.expt_file = []
+
+    def append_nan_values(self, session_idx, session):
+        """
+        Appends NaN values and session-specific metadata to all attributes.
+        """
+        self.expt_file.append(session)
+        self.all_neural_data.append(np.nan)
+        self.all_embeddings_3d.append(np.nan)
+        self.H0_value.append(np.nan)
+        self.H1_value.append(np.nan)
+        self.all_betti_0.append(np.nan)
+        self.all_betti_1.append(np.nan)
+        self.all_principal_curves_3d.append(np.nan)
+        self.all_curve_params_3d.append(np.nan)
+        self.all_binned_hipp_angle.append(np.nan)
+        self.all_binned_true_angle.append(np.nan)
+        self.all_binned_est_gain.append(np.nan)
+        self.all_binned_high_vel.append(np.nan)
+        self.all_decoded_angles.append(np.nan)
+        self.all_filtered_decoded_angles_unwrap.append(np.nan)
+        self.all_decode_H.append(np.nan)
+        self.all_session_idx.append(session_idx)
+        self.all_rat.append(session.rat)
+        self.all_day.append(session.day)
+        self.all_epoch.append(session.epoch)
+        self.all_num_skipped_clusters.append(np.nan)
+        self.all_num_used_clusters.append(np.nan)
+        self.all_avg_skipped_cluster_isolation_quality.append(np.nan)
+        self.all_avg_used_cluster_isolation_quality.append(np.nan)
+        self.all_mean_distance_to_principal_curve.append(np.nan)
+        self.all_mean_angle_difference.append(np.nan)
+        self.all_shuffled_mean_angle_difference.append(np.nan)
+        self.all_SI_score_hipp.append(np.nan)
+        self.all_SI_score_true.append(np.nan)
+        # self.all_mse_decode_vs_true.append(np.nan)
+        self.all_mean_H_difference.append(np.nan)
+        self.all_std_H_difference.append(np.nan)
     
     def get_results_dict(self):
         """
@@ -1396,7 +1437,8 @@ class CEBRAAnalysis:
             specifier = "only_vis_cue_included"
 
         data_dict = {
-            'specifier': specifier,
+            'expt_file': self.expt_file,
+            'specifier': np.array([specifier], dtype=object),
             'neural_data': self.all_neural_data,
             'embeddings_3d': self.all_embeddings_3d,
             'H0_value': self.H0_value,
@@ -1418,11 +1460,11 @@ class CEBRAAnalysis:
             'epoch': self.all_epoch,
             'num_skipped_clusters': self.all_num_skipped_clusters,
             'num_used_clusters': self.all_num_used_clusters,
-            'avg_skipped_cluster_isolation_quality': self.all_avg_skipped_cluster_isolation_quality,
-            'avg_used_cluster_isolation_quality': self.all_avg_used_cluster_isolation_quality,
-            'mean_distance_to_principal_curve': self.all_mean_distance_to_principal_curve,
-            'mean_angle_difference': self.all_mean_angle_difference,
-            'shuffled_mean_angle_difference': self.all_shuffled_mean_angle_difference,
+            'avg_skipped_cluster_iq': self.all_avg_skipped_cluster_isolation_quality,
+            'avg_used_cluster_iq': self.all_avg_used_cluster_isolation_quality,
+            'mean_dist_to_spline': self.all_mean_distance_to_principal_curve,
+            'mean_angle_diff': self.all_mean_angle_difference,
+            'shuffled_mean_angle_diff': self.all_shuffled_mean_angle_difference,
             'SI_score_hipp': self.all_SI_score_hipp,
             'SI_score_true': self.all_SI_score_true,
             # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
@@ -1826,38 +1868,7 @@ class CEBRAAnalysis:
                             if skip_session:
                                 print("[INFO] not enough embedding points "
                                         "Skipping the entire session and writing NaNs.")
-
-                                self.all_neural_data.append(np.nan)
-                                self.all_embeddings_3d.append(np.nan)
-                                self.H0_value.append(np.nan)
-                                self.H1_value.append(np.nan)
-                                self.all_betti_0.append(np.nan)
-                                self.all_betti_1.append(np.nan)
-                                self.all_principal_curves_3d.append(np.nan)
-                                self.all_curve_params_3d.append(np.nan)
-                                self.all_binned_hipp_angle.append(np.nan)
-                                self.all_binned_true_angle.append(np.nan)
-                                self.all_binned_est_gain.append(np.nan)
-                                self.all_binned_high_vel.append(np.nan)
-                                self.all_decoded_angles.append(np.nan)
-                                self.all_filtered_decoded_angles_unwrap.append(np.nan)
-                                self.all_decode_H.append(np.nan)
-                                self.all_session_idx.append(session_idx)
-                                self.all_rat.append(session.rat)
-                                self.all_day.append(session.day)
-                                self.all_epoch.append(session.epoch)
-                                self.all_num_skipped_clusters.append(np.nan)
-                                self.all_num_used_clusters.append(np.nan)
-                                self.all_avg_skipped_cluster_isolation_quality.append(np.nan)
-                                self.all_avg_used_cluster_isolation_quality.append(np.nan)
-                                self.all_mean_distance_to_principal_curve.append(np.nan)
-                                self.all_mean_angle_difference.append(np.nan)
-                                self.all_shuffled_mean_angle_difference.append(np.nan)
-                                self.all_SI_score_hipp.append(np.nan)
-                                self.all_SI_score_true.append(np.nan)
-                                # self.all_mse_decode_vs_true.append(np.nan) 
-                                self.all_mean_H_difference.append(np.nan)
-                                self.all_std_H_difference.append(np.nan)
+                                self.append_nan_values(session_idx,session)
 
                                 # Continue to the next session if not enough embedding points
                                 skip_session = False
@@ -1914,37 +1925,7 @@ class CEBRAAnalysis:
                                 print("[INFO] Detected knots were too close or"
                                       "Skipping the entire session and writing NaNs.")
 
-                                self.all_neural_data.append(np.nan)
-                                self.all_embeddings_3d.append(np.nan)
-                                self.H0_value.append(np.nan)
-                                self.H1_value.append(np.nan)
-                                self.all_betti_0.append(np.nan)
-                                self.all_betti_1.append(np.nan)
-                                self.all_principal_curves_3d.append(np.nan)
-                                self.all_curve_params_3d.append(np.nan)
-                                self.all_binned_hipp_angle.append(np.nan)
-                                self.all_binned_true_angle.append(np.nan)
-                                self.all_binned_est_gain.append(np.nan)
-                                self.all_binned_high_vel.append(np.nan)
-                                self.all_decoded_angles.append(np.nan)
-                                self.all_filtered_decoded_angles_unwrap.append(np.nan)
-                                self.all_decode_H.append(np.nan)
-                                self.all_session_idx.append(session_idx)
-                                self.all_rat.append(session.rat)
-                                self.all_day.append(session.day)
-                                self.all_epoch.append(session.epoch)
-                                self.all_num_skipped_clusters.append(np.nan)
-                                self.all_num_used_clusters.append(np.nan)
-                                self.all_avg_skipped_cluster_isolation_quality.append(np.nan)
-                                self.all_avg_used_cluster_isolation_quality.append(np.nan)
-                                self.all_mean_distance_to_principal_curve.append(np.nan)
-                                self.all_mean_angle_difference.append(np.nan)
-                                self.all_shuffled_mean_angle_difference.append(np.nan)
-                                self.all_SI_score_hipp.append(np.nan)
-                                self.all_SI_score_true.append(np.nan)
-                                # self.all_mse_decode_vs_true.append(np.nan)
-                                self.all_mean_H_difference.append(np.nan)
-                                self.all_std_H_difference.append(np.nan)
+                                self.append_nan_values(session_idx,session)
 
                                 # Continue to the next session if principal curve is None 
                                 continue
@@ -2051,7 +2032,6 @@ class CEBRAAnalysis:
                             _, sorted_vel, _ = CEBRAUtils.get_var_over_lap(
                                 var=binned_high_vel, true_angle=binned_true_angle_rad_unwrap
                             )
-
                             # Hipp frame
                             hipp_lap_number, hipp_decode_H, hipp_sorted_lap_number = CEBRAUtils.get_var_over_lap(
                                 var=decode_H, true_angle=binned_hipp_angle_rad_unwrap
@@ -2212,19 +2192,19 @@ def main():
     )
     analysis_no_land_off.run_analysis()
     
-    # 2) Run analysis with including when landmarks/optic flow off
-    analysis_land_off = CEBRAAnalysis(
-        session_choose=False,
-        max_num_reruns=1,
-        run_persistent_homology=False,
-        include_land_off=True,
-        save_folder=save_folder
-    )
-    analysis_land_off.run_analysis()
+    # Run analysis with including when landmarks/optic flow off
+    # analysis_land_off = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=True,
+    #     save_folder=save_folder
+    # )
+    # analysis_land_off.run_analysis()
     
     # Get their results as dictionaries:
     dict_no_land_off = analysis_no_land_off.get_results_dict()
-    dict_land_off = analysis_land_off.get_results_dict()
+    dict_land_off = analysis_no_land_off.get_results_dict()
     
     # Combine them into a single dictionary
     # so that each run is stored under a different field/struct
