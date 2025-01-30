@@ -1,0 +1,65 @@
+function plotVelocityHistogram(velocities, behav_var,behav_var_name)
+    % Function to plot a histogram of velocities and overlay the avg behav_var per bin
+    
+    figure; % Open new figure window
+    
+    % Define bin edges for histogram
+    binWidth = 5; % Adjust bin width as needed
+    binEdges = min(velocities):binWidth:max(velocities);
+    
+    % Compute histogram counts
+    [counts, edges] = histcounts(velocities, binEdges);
+    
+    % Compute average behavioral variable per velocity bin
+    avg_behav_var_per_bin = avgBehavVar(velocities, behav_var, binEdges);
+    
+    % Plot histogram
+    histogram(velocities, binEdges, 'FaceColor', 'b', 'EdgeColor', 'k');
+    hold on;
+    
+    % Plot average behavioral variable per bin
+    binCenters = edges(1:end-1) + diff(edges)/2; % Compute bin centers
+    yyaxis right % Use right y-axis for behavior variable
+    plot(binCenters, avg_behav_var_per_bin, 'ro-', 'LineWidth', 2, 'MarkerFaceColor', 'r');
+    
+    % Labels, title, and legend
+    xlabel('Velocity (deg/s)');
+    ylabel('Frequency');
+    yyaxis right
+    ylabel(sprintf('Avg %s',behav_var_name));
+    title(sprintf('Histogram of Velocities with Avg %s', behav_var_name));
+    legend('Velocity Histogram', sprintf('Avg %s',behav_var_name), 'Location', 'best');
+    grid on;
+    
+    hold off;
+    
+    % Display mean and standard deviation of velocities
+    mean_vel = mean(velocities);
+    std_vel = std(velocities);
+    disp(['Mean Velocity: ', num2str(mean_vel)]);
+    disp(['Standard Deviation: ', num2str(std_vel)]);
+end
+
+function avg_behav_var_per_bin = avgBehavVar(velocities, behav_var, binEdges)
+    % Compute the average behavior variable per velocity bin
+    
+    numBins = length(binEdges) - 1;
+    avg_behav_var_per_bin = nan(1, numBins); % Initialize with NaNs
+    
+    for i = 1:numBins
+        % Find indices of velocities within the current bin range
+        binIdx = (velocities >= binEdges(i)) & (velocities < binEdges(i+1));
+        
+        % Compute the average behavior variable in the bin
+        if any(binIdx) % Avoid division by zero
+            avg_behav_var_per_bin(i) = mean(behav_var(binIdx));
+        else
+            avg_behav_var_per_bin(i) = NaN; % Assign NaN if no data in bin
+        end
+    end
+end
+
+% Usage example:
+close all;
+H_error = decode_H - binned
+plotVelocityHistogram(land_off.sessions{1}.binned_high_vel, land_off.sessions{1},"Fourier H");

@@ -16,3 +16,5 @@
 *.pdf
 .history/
 .DS_Store
+*.avi
+*.mp4

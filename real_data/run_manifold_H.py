@@ -43,7 +43,9 @@ from dataclasses import dataclass, asdict
 class SessionData:
     expt_file: any  # Replace `any` with the actual type if known
     specifier: np.ndarray
-    neural_data: np.ndarray
+    neural_data_whole_trial: np.ndarray
+    neural_data_land_off: np.ndarray
+    neural_data_land_on: np.ndarray
     embeddings_3d: np.ndarray
     H0_value: float
     H1_value: float
@@ -1323,7 +1325,7 @@ class CEBRAAnalysis:
     using the utility methods from CEBRAUtils.
     """
 
-    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,save_folder=None):
+    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None):
         """
         Loads data, sets up configuration, etc.
         """
@@ -1363,12 +1365,13 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 42
-            self.optic_flow_num_trials = 2
-            self.optic_flow_control_point = 35
+            self.optic_flow_num_trials = 4
+            self.optic_flow_control_point = 33
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
         self.include_land_off = include_land_off
+        self.whole_trial_embeddings = whole_trial_embeddings
         self.save_folder = save_folder
 
         # List of experiment definitions
@@ -1394,7 +1397,9 @@ class CEBRAAnalysis:
         self.max_num_reruns = max_num_reruns
 
         # For final data collection
-        self.all_neural_data = []
+        self.all_neural_data_full_trial = []
+        self.all_neural_data_land_on = []
+        self.all_neural_data_land_off = []
         self.all_embeddings_3d = []
         self.H0_value = []
         self.H1_value = []
@@ -1434,7 +1439,9 @@ class CEBRAAnalysis:
         session_data = SessionData(
             expt_file=session,
             specifier=np.nan,
-            neural_data=np.nan,
+            neural_data_full_trial=np.nan,
+            neural_data_land_on=np.nan,
+            neural_data_land_off=np.nan,
             embeddings_3d=np.nan,
             H0_value=np.nan,
             H1_value=np.nan,
@@ -1468,52 +1475,6 @@ class CEBRAAnalysis:
         self.sessions_data.append(session_data)
 
     
-    # def get_results_dict(self):
-    #     """
-    #     Returns the final results of the analysis as a dictionary
-    #     suitable for saving to .mat or usage elsewhere.
-    #     """
-    #     if(self.include_land_off):
-    #         specifier = "full_trial_included"
-    #     else:
-    #         specifier = "only_vis_cue_included"
-
-    #     data_dict = {
-    #         'expt_file': self.expt_file,
-    #         'specifier': np.array([specifier], dtype=object),
-    #         'neural_data': self.all_neural_data,
-    #         'embeddings_3d': self.all_embeddings_3d,
-    #         'H0_value': self.H0_value,
-    #         'H1_value': self.H1_value,
-    #         'betti_0': self.all_betti_0,
-    #         'betti_1': self.all_betti_1,
-    #         'principal_curves_3d': self.all_principal_curves_3d,
-    #         'curve_params_3d': self.all_curve_params_3d,
-    #         'binned_hipp_angle': self.all_binned_hipp_angle,
-    #         'binned_true_angle': self.all_binned_true_angle,
-    #         'binned_est_gain': self.all_binned_est_gain,
-    #         'binned_high_vel': self.all_binned_high_vel,
-    #         'decoded_angles': self.all_decoded_angles,
-    #         'filtered_decoded_angles_unwrap': self.all_filtered_decoded_angles_unwrap,
-    #         'decode_H': self.all_decode_H,
-    #         'session_idx': self.all_session_idx,
-    #         'rat': self.all_rat,
-    #         'day': self.all_day,
-    #         'epoch': self.all_epoch,
-    #         'num_skipped_clusters': self.all_num_skipped_clusters,
-    #         'num_used_clusters': self.all_num_used_clusters,
-    #         'avg_skipped_cluster_iq': self.all_avg_skipped_cluster_isolation_quality,
-    #         'avg_used_cluster_iq': self.all_avg_used_cluster_isolation_quality,
-    #         'mean_dist_to_spline': self.all_mean_distance_to_principal_curve,
-    #         'mean_angle_diff': self.all_mean_angle_difference,
-    #         'shuffled_mean_angle_diff': self.all_shuffled_mean_angle_difference,
-    #         'SI_score_hipp': self.all_SI_score_hipp,
-    #         'SI_score_true': self.all_SI_score_true,
-    #         # 'mse_decode_vs_true': self.all_mse_decode_vs_true,
-    #         'mean_H_difference': self.all_mean_H_difference,
-    #         'std_H_difference': self.all_std_H_difference
-    #     }
-    #     return data_dict
     def get_results_dict(self):
         """
         Returns the final results of the analysis as a structured dictionary
@@ -1608,7 +1569,7 @@ class CEBRAAnalysis:
                         print(np.max(enc_times))
                         vis_cue_cutoff_bool = enc_times < 10000000000000
                         # Keep only those time points before landmarks are turned off AND divide by microseconds to get in seconds
-                        enc_times = enc_times[vis_cue_cutoff_bool] / 1e6
+                        enc_times = enc_times / 1e6
                         print(np.max(enc_times))
                         vel = np.array(ros_data.vel)
                         # Cutoff the velocity points accordingly as well
@@ -1749,16 +1710,24 @@ class CEBRAAnalysis:
                             continue
 
                         # Build neural data
-                        neural_data = np.array(all_spikes).T
+                        neural_data_full_trial = np.array(all_spikes).T
+                        neural_data_land_off = neural_data_full_trial[land_off_time_sec:,:]
+                        neural_data_land_on = neural_data_full_trial[:land_off_time_sec,:]
 
-                        if not self.include_land_off:
-                            neural_data = neural_data[:land_off_time_sec,:]
+                        print("neural_data_full_trial shape:", neural_data_full_trial.shape)  # Full dataset
+                        print("neural_data_land_off shape:", neural_data_land_off.shape)  # After slicing
+                        print("neural_data_land_on shape:", neural_data_land_on.shape)  # After slicing
+
+
+                        # if not self.include_land_off:
+                        #     neural_data_full_trial= neural_data[:land_off_time_sec,:]
+                
                         
-                        num_bins_neural = neural_data.shape[0]
+                        num_bins_neural = neural_data_full_trial.shape[0]
                         num_bins_behavior = len(binned_est_gain)
                         if num_bins_neural != num_bins_behavior:
                             min_bins = min(num_bins_neural, num_bins_behavior)
-                            neural_data = neural_data[:min_bins, :]
+                            neural_data_full_trial= neural_data_full_trial[:min_bins, :]
                             binned_est_gain = binned_est_gain[:min_bins]
                             binned_hipp_angle = binned_hipp_angle[:min_bins]
                             binned_true_angle = binned_true_angle[:min_bins]
@@ -1766,7 +1735,7 @@ class CEBRAAnalysis:
                             bins = bins[:min_bins]
 
                         print("neural data shape")
-                        print(neural_data.shape[0])
+                        print(neural_data_full_trial.shape[0])
 
                         
 
@@ -1784,26 +1753,27 @@ class CEBRAAnalysis:
                         for temp in temperature_list:
                             rerun_count = 0
                             while rerun_count < self.max_num_reruns:
-                                # if self.include_land_off: # If you want to include the data points after the landmarks/optic flow turned off or not
-                                #     embeddings_high_dim = CEBRAUtils.apply_cebra(
-                                #         neural_data_fit=neural_data,
-                                #         neural_data_embeddings=neural_data,
-                                #         output_dimension=3,
-                                #         temperature=temp
-                                #     )
-                                # else:
-                                #     embeddings_high_dim = CEBRAUtils.apply_cebra(
-                                #         neural_data_fit=neural_data,
-                                #         neural_data_embeddings=neural_data_land_off,
-                                #         output_dimension=3,
-                                #         temperature=temp
-                                #     )
-                                embeddings_high_dim = CEBRAUtils.apply_cebra(
-                                        neural_data_fit=neural_data,
-                                        neural_data_embeddings=neural_data,
+                                if self.include_land_off and self.whole_trial_embeddings: # If you want to include the data points after the landmarks/optic flow turned off or not
+                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                        neural_data_fit=neural_data_full_trial,
+                                        neural_data_embeddings=neural_data_full_trial,
                                         output_dimension=3,
                                         temperature=temp
-                                )
+                                    )
+                                elif not self.include_land_off and self.whole_trial_embeddings:
+                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                        neural_data_fit=neural_data_land_on,
+                                        neural_data_embeddings=neural_data_full_trial,
+                                        output_dimension=3,
+                                        temperature=temp
+                                    )
+                                elif not self.include_land_off and not self.whole_trial_embeddings:
+                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                            neural_data_fit=neural_data_land_on,
+                                            neural_data_embeddings=neural_data_land_on,
+                                            output_dimension=3,
+                                            temperature=temp
+                                    )
 
                                 embeddings_3d = embeddings_high_dim.copy()
 
@@ -2057,7 +2027,7 @@ class CEBRAAnalysis:
                             fig_3d = plt.figure(figsize=(10, 8))
                             ax3d = fig_3d.add_subplot(111, projection='3d')
                             scatter = ax3d.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2],
-                                                c=binned_hipp_angle_rad, cmap='viridis', s=5)
+                                                c=binned_hipp_angle_rad, cmap='jet', s=5)
                             if principal_curve_3d is not None:
                                 ax3d.plot(principal_curve_3d[:, 0], principal_curve_3d[:, 1], principal_curve_3d[:, 2],
                                         color='red', linewidth=2)
@@ -2192,7 +2162,9 @@ class CEBRAAnalysis:
 
                             # Save final results
                             self.expt_file.append(session)
-                            self.all_neural_data.append(neural_data)
+                            self.all_neural_data_full_trial.append(neural_data_full_trial)
+                            self.all_neural_data_land_off.append(neural_data_land_off)
+                            self.all_neural_data_land_on.append(neural_data_land_on)
                             self.all_embeddings_3d.append(embeddings_3d)
                             self.H0_value.append(H0_value)
                             self.H1_value.append(H1_value)
@@ -2227,7 +2199,9 @@ class CEBRAAnalysis:
                             session_data = SessionData(
                                 expt_file=session,
                                 specifier=np.nan,
-                                neural_data=neural_data,
+                                neural_data_full_trial=neural_data_full_trial,
+                                neural_data_land_off=neural_data_land_off,
+                                neural_data_land_on=neural_data_land_on,
                                 embeddings_3d=embeddings_3d,
                                 H0_value=H0_value,
                                 H1_value=H1_value,
@@ -2237,7 +2211,7 @@ class CEBRAAnalysis:
                                 curve_params_3d=curve_params_3d,
                                 binned_hipp_angle=binned_hipp_angle_rad_unwrap,
                                 binned_true_angle=binned_true_angle_rad_unwrap,
-                                binned_est_gain=binned_est_gain,
+                                binned_est_gain=binned_est_gain, 
                                 binned_high_vel=binned_high_vel,
                                 decoded_angles=decoded_angles_unwrap,
                                 filtered_decoded_angles_unwrap=filtered_decoded_angles_unwrap,
@@ -2276,7 +2250,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'progression_check'
+    save_folder = 'end_of_Jan_30'
 
     #Run analysis with no including when landmarks/optic flow are off
     analysis_no_land_off = CEBRAAnalysis(
@@ -2284,19 +2258,31 @@ def main():
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=False,
+        whole_trial_embeddings=True,
         save_folder=save_folder
     )
     analysis_no_land_off.run_analysis()
     
-    # Run analysis with including when landmarks/optic flow off
-    # analysis_land_off = CEBRAAnalysis(
-    #     session_choose=False,
-    #     max_num_reruns=1,
-    #     run_persistent_homology=False,
-    #     include_land_off=True,
-    #     save_folder=save_folder
-    # )
-    # analysis_land_off.run_analysis()
+    #Run analysis with including when landmarks/optic flow off
+    analysis_land_off = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder
+    )
+    analysis_land_off.run_analysis()
+
+    analysis_land_off = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=False,
+        whole_trial_embeddings=False,
+        save_folder=save_folder
+    )
+    analysis_land_off.run_analysis()
     
     # Get their results as dictionaries:
     dict_no_land_off = analysis_no_land_off.get_results_dict()
@@ -2308,8 +2294,6 @@ def main():
         'no_land_off': dict_no_land_off,
         'land_off': dict_land_off
     }
-
-    
 
     base_path = f'/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/'
     mat_filename = os.path.join(base_path, save_folder, f'{save_folder}_all_sessions_data.mat')
