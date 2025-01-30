@@ -43,7 +43,7 @@ from dataclasses import dataclass, asdict
 class SessionData:
     expt_file: any  # Replace `any` with the actual type if known
     specifier: np.ndarray
-    neural_data_whole_trial: np.ndarray
+    neural_data_full_trial: np.ndarray
     neural_data_land_off: np.ndarray
     neural_data_land_on: np.ndarray
     embeddings_3d: np.ndarray
