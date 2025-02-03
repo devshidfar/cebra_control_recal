@@ -1,5 +1,5 @@
 """
-File: cebra_analysis_oop.py
+File: run_manifold_H.py
 
 Dependencies:
     - cebra
@@ -52,7 +52,7 @@ class SessionData:
     betti_0: int
     betti_1: int
     principal_curves_3d: np.ndarray
-    curve_params_3d: any  # Replace `any` with the actual type if known
+    curve_params_3d: any 
     binned_hipp_angle: np.ndarray
     binned_true_angle: np.ndarray
     binned_est_gain: np.ndarray
@@ -60,15 +60,19 @@ class SessionData:
     decoded_angles: np.ndarray
     filtered_decoded_angles_unwrap: np.ndarray
     decode_H: np.ndarray
+    lap_decode_H: np.ndarray
+    lap_est_gain: np.ndarray
+    lap_vel: np.ndarray
     session_idx: int
-    rat: any  # Replace `any` with the actual type if known
-    day: any  # Replace `any` with the actual type if known
-    epoch: any  # Replace `any` with the actual type if known
+    rat: any  
+    day: any  
+    epoch: any  
     num_skipped_clusters: int
     num_used_clusters: int
     avg_skipped_cluster_iq: float
     avg_used_cluster_iq: float
     mean_dist_to_spline: float
+    dist_to_spline: np.ndarray
     mean_angle_diff: float
     shuffled_mean_angle_diff: float
     SI_score_hipp: float
@@ -382,20 +386,37 @@ class CEBRAUtils:
         # Build final spline
         loop_final_knots = fhf.loop_knots(final_knots)
         tt, curve = fhf.get_curve_from_knots(loop_final_knots, 'eq_vel')
+        # print(type(tt))
+        # print(tt.shape[0])
+        # print(embeddings.shape[0])
+        # print(tt.shape)
+        # tt = tt[:min(tt.shape[0],embeddings.shape[0])-1]
+        # print(type(tt))
+        # print(tt.shape[0])
+        # print(tt.shape)
         _, curve_pre = fhf.get_curve_from_knots(loop_final_knots, 'eq_vel')
 
         # Shift 'tt' to align with reference angles
         if ref_angle is not None and tt is not None:
+            print("entered")
             tt = tt * 2 * np.pi
             tt_shifted = (tt + ref_angle[3]) % (2 * np.pi)
 
             # Check the first slope sign
             tt_diff = np.diff(tt_shifted)
             angle_diff = np.diff(ref_angle)
-            if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
-                tt_shifted = np.flip(tt_shifted)
-                curve = np.flip(curve, axis=0)
+            print(tt[:20])
+            print(ref_angle[:20])
+            print(tt_diff[:20])
+            print(angle_diff[:20])
+            print("signs")
+            print(np.sign(tt_diff[0]))
+            print(np.sign(angle_diff[0]))
+            # if np.sign(tt_diff[0]) != np.sign(angle_diff[0]):
+            #     tt_shifted = np.flip(tt_shifted)
+            #     curve = np.flip(curve, axis=0)
             tt = tt_shifted
+
 
         return curve, curve_pre, tt
 
@@ -431,7 +452,7 @@ class CEBRAUtils:
         """
         from scipy.spatial import KDTree
 
-        def interpolate_principal_curve(principal_curve, points_per_unit_distance=10):
+        def interpolate_principal_curve(principal_curve, points_per_unit_distance=1000):
             """
             Utility to do a linear interpolation for the principal_curve.
             """
@@ -460,7 +481,7 @@ class CEBRAUtils:
             tree = KDTree(pc_interp)
             distances, _ = tree.query(embeddings, k=1)
             mean_distance = np.mean(distances)
-            return mean_distance
+            return mean_distance, distances
 
     @staticmethod
     def low_pass_filter(angles=None, cutoff_frequency=0.1, filter_order=3, fs=1):
@@ -1325,7 +1346,7 @@ class CEBRAAnalysis:
     using the utility methods from CEBRAUtils.
     """
 
-    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None):
+    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None,trial_type='default'):
         """
         Loads data, sets up configuration, etc.
         """
@@ -1364,15 +1385,16 @@ class CEBRAAnalysis:
             self.optic_flow_sessions = [35]
         else:
             self.landmark_num_trials = 0
-            self.landmark_control_point = 42
-            self.optic_flow_num_trials = 4
-            self.optic_flow_control_point = 33
+            self.landmark_control_point = 1
+            self.optic_flow_num_trials = 25
+            self.optic_flow_control_point = 28
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
         self.include_land_off = include_land_off
         self.whole_trial_embeddings = whole_trial_embeddings
         self.save_folder = save_folder
+        self.trial_type = trial_type
 
         # List of experiment definitions
         self.expts = [
@@ -1454,6 +1476,9 @@ class CEBRAAnalysis:
             binned_est_gain=np.nan,
             binned_high_vel=np.nan,
             decoded_angles=np.nan,
+            lap_decode_H = np.nan,
+            lap_est_gain = np.nan,
+            lap_vel = np.nan,
             filtered_decoded_angles_unwrap=np.nan,
             decode_H=np.nan,
             session_idx=session_idx,
@@ -1465,6 +1490,7 @@ class CEBRAAnalysis:
             avg_skipped_cluster_iq=np.nan,
             avg_used_cluster_iq=np.nan,
             mean_dist_to_spline=np.nan,
+            dist_to_spline=np.nan,
             mean_angle_diff=np.nan,
             shuffled_mean_angle_diff=np.nan,
             SI_score_hipp=np.nan,
@@ -1539,24 +1565,16 @@ class CEBRAAnalysis:
                         f'session_{session_idx}'
                         )   
                         os.makedirs(session_base_path, exist_ok=True)
-                        
-                        if self.include_land_off:
-                            SI_plots_path = os.path.join(session_base_path, 'SI_Plots',"full")
-                            anim_save_file = os.path.join(session_base_path, '3d_Animations',"full")
-                            spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms',"full")
-                            param_plot_path = os.path.join(session_base_path, 'Param_Plots',"full")
-                            H_plot_path = os.path.join(session_base_path, 'H_Plots',"full")
-                            pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots',"full")
-                        else:
-                            SI_plots_path = os.path.join(session_base_path, 'SI_Plots','vis_cue_only')
-                            anim_save_file = os.path.join(session_base_path, '3d_Animations','vis_cue_only')
-                            spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms','vis_cue_only')
-                            param_plot_path = os.path.join(session_base_path, 'Param_Plots','vis_cue_only')
-                            H_plot_path = os.path.join(session_base_path, 'H_Plots','vis_cue_only')
-                            pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots','vis_cue_only')
-                        
+                    
+                        SI_plots_path = os.path.join(session_base_path, 'SI_Plots',self.trial_type)
+                        anim_save_file = os.path.join(session_base_path, '3d_Animations',self.trial_type)
+                        spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms',self.trial_type)
+                        param_plot_path = os.path.join(session_base_path, 'Param_Plots',self.trial_type)
+                        H_plot_path = os.path.join(session_base_path, 'H_Plots',self.trial_type)
+                        pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots',self.trial_type)
 
-                        paths_to_create = [SI_plots_path, anim_save_file, spectrogram_path, param_plot_path, H_plot_path]
+
+                        paths_to_create = [SI_plots_path, anim_save_file, spectrogram_path, param_plot_path, H_plot_path, pers_hom_path]
                         for path in paths_to_create:
                             os.makedirs(path, exist_ok=True)
 
@@ -1777,6 +1795,12 @@ class CEBRAAnalysis:
 
                                 embeddings_3d = embeddings_high_dim.copy()
 
+                                # Concatenate according to the size of embeddings_3d decided by the type of trial (land_on,land_off, etc.)
+                                binned_hipp_angle = binned_hipp_angle[:embeddings_3d.shape[0]]
+                                binned_true_angle = binned_true_angle[:embeddings_3d.shape[0]]
+                                binned_est_gain = binned_est_gain[:embeddings_3d.shape[0]]
+                                binned_high_vel = binned_high_vel[:embeddings_3d.shape[0]]
+
                                 # # Build mask for NaNs
                                 # nan_mask_3d = (
                                 #     ~np.isnan(embeddings_3d).any(axis=1) &
@@ -1821,7 +1845,7 @@ class CEBRAAnalysis:
                                     binned_est_gain = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
                                     binned_high_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_high_vel)
 
-                                if embeddings_3d.shape[0] < 100:
+                                if embeddings_3d.shape[0] < 201:
                                     print(f"length of embeddings is: {embeddings_3d.shape[0]}, skipping session {session_idx}")
                                     skip_session = True
                                     break
@@ -1896,7 +1920,9 @@ class CEBRAAnalysis:
                             if skip_session:
                                 print("[INFO] not enough embedding points "
                                         "Skipping the entire session and writing NaNs.")
-                                self.append_nan(self,session_idx,session)
+                                print(session_idx)
+                                print(session)
+                                self.append_nan_values(session_idx,session)
 
                                 # Continue to the next session if not enough embedding points
                                 skip_session = False
@@ -1953,13 +1979,15 @@ class CEBRAAnalysis:
                                 print("[INFO] Detected knots were too close or"
                                       "Skipping the entire session and writing NaNs.")
 
-                                self.append_nan_values(self, session_idx, session)
+                                self.append_nan_values(session_idx, session)
 
                                 # Continue to the next session if principal curve is None 
                                 continue
 
                             # Distance to principal curve
-                            mean_dist_to_spline = CEBRAUtils.mean_dist_to_spline(embeddings_3d, principal_curve_3d)
+                            mean_dist_to_spline, distances_to_spline = CEBRAUtils.mean_dist_to_spline(embeddings_3d, principal_curve_3d)
+                            print("dists to spline")
+                            print(distances_to_spline[:20])
 
                             # Decode angles
                             decoded_angles, _ = CEBRAUtils.decode_hipp_angle_spline(
@@ -1979,6 +2007,7 @@ class CEBRAAnalysis:
 
 
                             decoded_angles_unwrap = np.unwrap(decoded_angles + binned_true_angle_rad_unwrap[3])
+                            binned_hipp_angle_unwrap = np.unwrap(binned_hipp_angle)
 
                             print("range")
                             print(np.max(decoded_angles) - np.min(decoded_angles))
@@ -2160,41 +2189,6 @@ class CEBRAAnalysis:
                                 save_path=spectrogram_path,
                             )
 
-                            # Save final results
-                            self.expt_file.append(session)
-                            self.all_neural_data_full_trial.append(neural_data_full_trial)
-                            self.all_neural_data_land_off.append(neural_data_land_off)
-                            self.all_neural_data_land_on.append(neural_data_land_on)
-                            self.all_embeddings_3d.append(embeddings_3d)
-                            self.H0_value.append(H0_value)
-                            self.H1_value.append(H1_value)
-                            self.all_betti_0.append(betti_0)
-                            self.all_betti_1.append(betti_1)
-                            self.all_principal_curves_3d.append(principal_curve_3d)
-                            self.all_curve_params_3d.append(curve_params_3d)
-                            self.all_binned_hipp_angle.append(binned_hipp_angle_rad_unwrap)
-                            self.all_binned_true_angle.append(binned_true_angle_rad_unwrap)
-                            self.all_binned_est_gain.append(binned_est_gain)
-                            self.all_binned_high_vel.append(binned_high_vel)
-                            self.all_decoded_angles.append(decoded_angles_unwrap)
-                            self.all_filtered_decoded_angles_unwrap.append(filtered_decoded_angles_unwrap)
-                            self.all_decode_H.append(decode_H)
-                            self.all_session_idx.append(session_idx)
-                            self.all_rat.append(session.rat)
-                            self.all_day.append(session.day)
-                            self.all_epoch.append(session.epoch)
-                            self.all_num_skipped_clusters.append(num_skipped_cluster)
-                            self.all_num_used_clusters.append(num_used_cluster)
-                            self.all_avg_skipped_cluster_isolation_quality.append(avg_skipped_cluster_iq)
-                            self.all_avg_used_cluster_isolation_quality.append(avg_used_cluster_iq)
-                            self.all_mean_distance_to_principal_curve.append(mean_dist_to_spline)
-                            self.all_mean_angle_difference.append(mean_angle_diff)
-                            self.all_shuffled_mean_angle_difference.append(shuffled_mean_angle_diff)
-                            self.all_SI_score_hipp.append(best_SI_score_hipp)
-                            self.all_SI_score_true.append(SI_score_true)
-                            # self.all_mse_decode_vs_true.append(mse_decode_vs_true)
-                            self.all_mean_H_difference.append(mean_H_diff)
-                            self.all_std_H_difference.append(std_H_diff)
 
                             session_data = SessionData(
                                 expt_file=session,
@@ -2216,6 +2210,9 @@ class CEBRAAnalysis:
                                 decoded_angles=decoded_angles_unwrap,
                                 filtered_decoded_angles_unwrap=filtered_decoded_angles_unwrap,
                                 decode_H=decode_H,
+                                lap_decode_H=sorted_decode_H,
+                                lap_est_gain=sorted_H_est,
+                                lap_vel=sorted_vel,
                                 session_idx=session_idx,
                                 rat=session.rat,
                                 day=session.day,
@@ -2225,6 +2222,7 @@ class CEBRAAnalysis:
                                 avg_skipped_cluster_iq=avg_skipped_cluster_iq,
                                 avg_used_cluster_iq=avg_used_cluster_iq,
                                 mean_dist_to_spline=mean_dist_to_spline,
+                                dist_to_spline=distances_to_spline,
                                 mean_angle_diff=mean_angle_diff,
                                 shuffled_mean_angle_diff=shuffled_mean_angle_diff,
                                 SI_score_hipp=best_SI_score_hipp,
@@ -2250,50 +2248,112 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'end_of_Jan_30'
+    save_folder = 'lap_test'
 
     #Run analysis with no including when landmarks/optic flow are off
-    analysis_no_land_off = CEBRAAnalysis(
+    analysis_train_land_on = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=False,
         whole_trial_embeddings=True,
-        save_folder=save_folder
+        save_folder=save_folder,
+        trial_type='train_land_on'
     )
-    analysis_no_land_off.run_analysis()
-    
+
     #Run analysis with including when landmarks/optic flow off
-    analysis_land_off = CEBRAAnalysis(
+    analysis_full_trial = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=True,
         whole_trial_embeddings=True,
-        save_folder=save_folder
+        save_folder=save_folder,
+        trial_type='full_trial'
     )
-    analysis_land_off.run_analysis()
 
-    analysis_land_off = CEBRAAnalysis(
+    analysis_land_on = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=False,
         whole_trial_embeddings=False,
-        save_folder=save_folder
+        save_folder=save_folder,
+        trial_type='land_on'
     )
-    analysis_land_off.run_analysis()
+
+    # # analysis_land_on.run_analysis()
+    # analysis_full_trial.run_analysis()
+    # # analysis_train_land_on.run_analysis()
+
+
     
-    # Get their results as dictionaries:
-    dict_no_land_off = analysis_no_land_off.get_results_dict()
-    dict_land_off = analysis_no_land_off.get_results_dict()
+    # # Get their results as dictionaries:
+
+    # dict_analysis_land_on = analysis_land_on.get_results_dict()
+    # dict_analysis_full_trial = analysis_full_trial.get_results_dict()
+    # dict_analysis_train_land_on = analysis_train_land_on.get_results_dict()
+    # combined_results = {
+    #     'land_on': dict_analysis_land_on,
+    #     'full_trial': dict_analysis_full_trial,
+    #     'train_land_on': dict_analysis_train_land_on
+    # }
+
+
+    analysis_full_trial = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_1'
+    )
+    analysis_full_trial.run_analysis()
+    dict_analysis_full_trial_1 = analysis_full_trial.get_results_dict()
+    analysis_full_trial = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_2'
+    )
+    analysis_full_trial.run_analysis()
+    dict_analysis_full_trial_2 = analysis_full_trial.get_results_dict()
+    analysis_full_trial = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_3'
+    )
+    analysis_full_trial.run_analysis()
+    dict_analysis_full_trial_3 = analysis_full_trial.get_results_dict()
+    analysis_full_trial = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_4'
+    )
+    analysis_full_trial.run_analysis()
+    dict_analysis_full_trial_4 = analysis_full_trial.get_results_dict()
+
+    combined_results = {
+        'full_trial_1': dict_analysis_full_trial_1,
+        'full_trial_1': dict_analysis_full_trial_2,
+        'full_trial_1': dict_analysis_full_trial_3,
+        'full_trial_1': dict_analysis_full_trial_4
+    }
     
     # Combine them into a single dictionary
     # so that each run is stored under a different field/struct
-    combined_results = {
-        'no_land_off': dict_no_land_off,
-        'land_off': dict_land_off
-    }
 
     base_path = f'/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/'
     mat_filename = os.path.join(base_path, save_folder, f'{save_folder}_all_sessions_data.mat')
