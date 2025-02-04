@@ -63,6 +63,7 @@ class SessionData:
     lap_decode_H: np.ndarray
     lap_est_gain: np.ndarray
     lap_vel: np.ndarray
+    lap_number: np.ndarray
     session_idx: int
     rat: any  
     day: any  
@@ -1386,7 +1387,7 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 1
-            self.optic_flow_num_trials = 25
+            self.optic_flow_num_trials = 1
             self.optic_flow_control_point = 28
 
         self.run_persistent_homology = run_persistent_homology
@@ -1478,6 +1479,7 @@ class CEBRAAnalysis:
             decoded_angles=np.nan,
             lap_decode_H = np.nan,
             lap_est_gain = np.nan,
+            lap_number = np.nan,
             lap_vel = np.nan,
             filtered_decoded_angles_unwrap=np.nan,
             decode_H=np.nan,
@@ -2213,6 +2215,7 @@ class CEBRAAnalysis:
                                 lap_decode_H=sorted_decode_H,
                                 lap_est_gain=sorted_H_est,
                                 lap_vel=sorted_vel,
+                                lap_number=lap_number,
                                 session_idx=session_idx,
                                 rat=session.rat,
                                 day=session.day,
@@ -2248,7 +2251,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'lap_test'
+    save_folder = 'trial_type_test'
 
     #Run analysis with no including when landmarks/optic flow are off
     analysis_train_land_on = CEBRAAnalysis(
@@ -2300,7 +2303,7 @@ def main():
     # }
 
 
-    analysis_full_trial = CEBRAAnalysis(
+    analysis_full_trial_1 = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
@@ -2309,9 +2312,9 @@ def main():
         save_folder=save_folder,
         trial_type='full_trial_1'
     )
-    analysis_full_trial.run_analysis()
-    dict_analysis_full_trial_1 = analysis_full_trial.get_results_dict()
-    analysis_full_trial = CEBRAAnalysis(
+    analysis_full_trial_1.run_analysis()
+    dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
+    analysis_full_trial_2 = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
@@ -2320,30 +2323,30 @@ def main():
         save_folder=save_folder,
         trial_type='full_trial_2'
     )
-    analysis_full_trial.run_analysis()
-    dict_analysis_full_trial_2 = analysis_full_trial.get_results_dict()
-    analysis_full_trial = CEBRAAnalysis(
+    analysis_full_trial_2.run_analysis()
+    dict_analysis_full_trial_2 = analysis_full_trial_2.get_results_dict()
+    analysis_full_trial_3 = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_3'
+        trial_type='full_trial_2'
     )
-    analysis_full_trial.run_analysis()
-    dict_analysis_full_trial_3 = analysis_full_trial.get_results_dict()
-    analysis_full_trial = CEBRAAnalysis(
+    analysis_full_trial_3.run_analysis()
+    dict_analysis_full_trial_3 = analysis_full_trial_3.get_results_dict()
+    analysis_full_trial_4 = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
         run_persistent_homology=False,
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_4'
+        trial_type='full_trial_2'
     )
-    analysis_full_trial.run_analysis()
-    dict_analysis_full_trial_4 = analysis_full_trial.get_results_dict()
+    analysis_full_trial_4.run_analysis()
+    dict_analysis_full_trial_4 = analysis_full_trial_4.get_results_dict()
 
     combined_results = {
         'full_trial_1': dict_analysis_full_trial_1,
