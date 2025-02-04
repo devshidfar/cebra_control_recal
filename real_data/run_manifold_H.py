@@ -1387,7 +1387,7 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 1
-            self.optic_flow_num_trials = 1
+            self.optic_flow_num_trials = 25
             self.optic_flow_control_point = 28
 
         self.run_persistent_homology = run_persistent_homology
@@ -2332,7 +2332,7 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_2'
+        trial_type='full_trial_3'
     )
     analysis_full_trial_3.run_analysis()
     dict_analysis_full_trial_3 = analysis_full_trial_3.get_results_dict()
@@ -2343,16 +2343,16 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_2'
+        trial_type='full_trial_4'
     )
     analysis_full_trial_4.run_analysis()
     dict_analysis_full_trial_4 = analysis_full_trial_4.get_results_dict()
 
     combined_results = {
         'full_trial_1': dict_analysis_full_trial_1,
-        'full_trial_1': dict_analysis_full_trial_2,
-        'full_trial_1': dict_analysis_full_trial_3,
-        'full_trial_1': dict_analysis_full_trial_4
+        'full_trial_2': dict_analysis_full_trial_2,
+        'full_trial_3': dict_analysis_full_trial_3,
+        'full_trial_4': dict_analysis_full_trial_4
     }
     
     # Combine them into a single dictionary
