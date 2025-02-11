@@ -1,7 +1,7 @@
-function processAllSessions(land_off, no_land_off)
+function processAllSessions(full_trial_1, full_trial_2)
     % Process all sessions in land_off and no_land_off datasets
-    processDataset(land_off.sessions, 'land_off');
-    processDataset(no_land_off.sessions, 'no_land_off');
+    processDataset(full_trial_1.sessions, 'full_trial_1');
+    processDataset(full_trial_2.sessions, 'full_trial_2');
     disp('All session animations complete.');
 end
 
@@ -23,7 +23,7 @@ function processSession(sessionData, session_idx, datasetType)
     
     % Extract embeddings and velocity data
     embeddings_3d = squeeze(sessionData.embeddings_3d);
-    binned_hipp_angle = sessionData.binned_hipp_angle;
+    binned_hipp_angle = sessionData.binned_high_vel;
     binned_high_vel = sessionData.binned_high_vel;
     binned_high_vel_rad = binned_high_vel * (2*pi/180);
     
@@ -72,7 +72,7 @@ function processSession(sessionData, session_idx, datasetType)
 
     % Set correct frame rate for VideoWriter
     frameRate = 1 / timeStep; 
-    videoFileName = sprintf('%sSession%dEvolution.mp4', datasetType, session_idx);
+    videoFileName = sprintf('Velocity%sSession%dEvolution.mp4', datasetType, session_idx);
     videoFile = VideoWriter(videoFileName, 'MPEG-4');
     videoFile.FrameRate = frameRate;
     open(videoFile);
@@ -113,5 +113,5 @@ function keyPressCallback(~, event)
     end
 end
 
-processAllSessions(land_off, no_land_off);
+processAllSessions(full_trial_1, full_trial_2);
 
