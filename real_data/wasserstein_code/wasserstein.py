@@ -5,6 +5,7 @@ from scipy.io import loadmat, savemat
 from scipy.spatial.transform import Rotation as R
 import ot  # POT: Python Optimal Transport
 import plotly.graph_objects as go
+from scipy.spatial.distance import cdist
 
 plt.close('all')
 
@@ -42,7 +43,7 @@ def compute_partial_emd(source_cloud, target_cloud, mass_ratio=None):
     N, M = len(source_cloud), len(target_cloud)
 
     # Compute pairwise Euclidean cost matrix
-    cost_matrix = np.linalg.norm(source_cloud[:, None, :] - target_cloud[None, :, :], axis=2)
+    cost_matrix = ot.dist(source_cloud,target_cloud,metric='euclidean')
 
     # Define uniform weights, allowing partial matching
     weights_source = np.ones(N) / N
@@ -50,9 +51,13 @@ def compute_partial_emd(source_cloud, target_cloud, mass_ratio=None):
 
     # Compute Partial Wasserstein Distance (partial EMD)
     # mass_ratio = (min(N,M)) /(max(N,M))
-    mass_ratio = min(np.sum(weights_source), np.sum(weights_target))
-    transport_plan = ot.partial.partial_wasserstein(weights_source, weights_target, cost_matrix, m=mass_ratio)
-    emd_value =  np.sum(transport_plan * cost_matrix)
+    # mass_ratio = min(np.sum(weights_source), np.sum(weights_target))
+    # transport_plan = ot.partial.partial_wasserstein(weights_source, weights_target, cost_matrix, m=mass_ratio)
+    # emd_value =  np.sum(transport_plan * cost_matrix)
+    emd_value = ot.emd2(weights_source,weights_target,cost_matrix)
+    # SWD = ot.sliced_wasserstein_distance(source_cloud, target_cloud, n_projections=50)
+
+    # print(f"Sliced Wasserstein Distance: {SWD:.4f}")
 
     return emd_value
 
@@ -107,7 +112,7 @@ if __name__ == "__main__":
     # "across": take one trial (e.g., trial 0) from each session and compare across sessions.
     mode = "across"  # or "within"
 
-    # Load embeddings (adjust file path as needed)
+    # Load embeddings
     file_path = '/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/trial_type_test/trial_type_test_all_sessions_data.mat'
     mat_data = loadmat(file_path, struct_as_record=False, squeeze_me=True)
     
@@ -119,7 +124,7 @@ if __name__ == "__main__":
 
     save_dir = "wasserstein_plots"
     os.makedirs(save_dir, exist_ok=True)
-    num_trials = 20  # Number of sessions/trials to compare
+    num_trials = 15  # Number of sessions/trials to compare
 
     if mode == "within":
         # Within-session comparison: For each trial in a given session, compare rotated clouds from different sources.
@@ -160,8 +165,8 @@ if __name__ == "__main__":
     
     elif mode == "across":
         # Across-session comparison: Compare one trial (e.g., trial 0) across sessions.
-        start_point = 7
-        target_cloud = embeddings_list[0][7]  # Take the first trial from session  as the target
+        start_point = 0
+        target_cloud = embeddings_list[0][7]  # Take the {start_point} trial from session  as the target
         source_clouds = [embeddings_list[0][i] for i in range(start_point, num_trials)]
     
         N = source_clouds[0].shape[0]
