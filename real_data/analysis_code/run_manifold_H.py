@@ -44,10 +44,14 @@ from sklearn.metrics import pairwise_distances
 class SessionData:
     expt_file: any  # Replace `any` with the actual type if known
     specifier: np.ndarray
+    neural_data_fit: np.ndarray
+    neural_data_low_vel: np.ndarray
+    embeddings_low_vel: np.ndarray
     neural_data_full_trial: np.ndarray
     neural_data_land_off: np.ndarray
     neural_data_land_on: np.ndarray
     embeddings_3d: np.ndarray
+    high_vel_idx: np.ndarray
     H0_value: float
     H1_value: float
     betti_0: int
@@ -57,7 +61,7 @@ class SessionData:
     binned_hipp_angle: np.ndarray
     binned_true_angle: np.ndarray
     binned_est_gain: np.ndarray
-    binned_high_vel: np.ndarray
+    binned_vel: np.ndarray
     decoded_angles: np.ndarray
     filtered_decoded_angles_unwrap: np.ndarray
     decode_H: np.ndarray
@@ -90,7 +94,7 @@ class CEBRAUtils:
     """
 
     @staticmethod
-    def apply_cebra(neural_data_fit=None, neural_data_embeddings=None, output_dimension=3, temperature=1):
+    def apply_cebra(neural_data_fit=None, neural_data_embeddings=None, neural_data_low_vel=None, output_dimension=3, temperature=1):
         """
         Apply the CEBRA model to 'neural_data' and return the embeddings.
         """
@@ -102,7 +106,8 @@ class CEBRAUtils:
         )
         model.fit(neural_data_fit)
         embeddings = model.transform(neural_data_embeddings)
-        return embeddings
+        low_vel_embeddings = model.transform(neural_data_low_vel)
+        return embeddings, low_vel_embeddings
     
     @staticmethod
     def linear_interpolate_nans_2d(array_2d):
@@ -1401,7 +1406,7 @@ class CEBRAAnalysis:
             self.landmark_num_trials = 0
             self.landmark_control_point = 1
             self.optic_flow_num_trials = 1
-            self.optic_flow_control_point = 35
+            self.optic_flow_control_point = 32
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
@@ -1446,7 +1451,7 @@ class CEBRAAnalysis:
         self.all_binned_hipp_angle = []
         self.all_binned_true_angle = []
         self.all_binned_est_gain = []
-        self.all_binned_high_vel = []
+        self.all_vel = []
         self.all_decoded_angles = []
         self.all_filtered_decoded_angles_unwrap = []
         self.all_decode_H = []
@@ -1475,9 +1480,13 @@ class CEBRAAnalysis:
         session_data = SessionData(
             expt_file=session,
             specifier=np.nan,
+            neural_data_fit=np.nan,
+            neural_data_low_vel=np.nan,
+            embeddings_low_vel=np.nan,
             neural_data_full_trial=np.nan,
             neural_data_land_on=np.nan,
             neural_data_land_off=np.nan,
+            high_vel_idx=np.nan,
             embeddings_3d=np.nan,
             H0_value=np.nan,
             H1_value=np.nan,
@@ -1488,7 +1497,7 @@ class CEBRAAnalysis:
             binned_hipp_angle=np.nan,
             binned_true_angle=np.nan,
             binned_est_gain=np.nan,
-            binned_high_vel=np.nan,
+            binned_vel=np.nan,
             decoded_angles=np.nan,
             lap_decode_H = np.nan,
             lap_est_gain = np.nan,
@@ -1613,37 +1622,45 @@ class CEBRAAnalysis:
                         enc_times = enc_times[valid_idx]
                         vel = vel[valid_idx]
                         high_vel_idx = vel > self.vel_threshold
+
                         if np.sum(high_vel_idx) == 0:
                             print("[WARNING] No data points above velocity threshold. Skipping session.")
                             continue
 
-                        enc_times_high_vel = enc_times[high_vel_idx]
-                        high_vel_filtered = vel[high_vel_idx]
-                        est_gain_filtered = np.array(ros_data.estGain)[vis_cue_cutoff_bool][valid_idx][high_vel_idx]
-                        hipp_angle_filtered = np.array(ros_data.hippAngle)[vis_cue_cutoff_bool][valid_idx][high_vel_idx]
-                        true_angle_filtered = np.array(ros_data.encAngle)[vis_cue_cutoff_bool][high_vel_idx]
-                        rel_angle_filtered = np.array(ros_data.relAngle)[vis_cue_cutoff_bool][high_vel_idx]
+                        # enc_times = enc_times[high_vel_idx]
+                        enc_times_low_vel = enc_times[~high_vel_idx]
+                        low_vel_filtered = vel[~high_vel_idx]
+                        # high_vel_filtered = vel[high_vel_idx]
+                        # est_gain_filtered = np.array(ros_data.estGain)[vis_cue_cutoff_bool][valid_idx][high_vel_idx]
+                        # hipp_angle_filtered = np.array(ros_data.hippAngle)[vis_cue_cutoff_bool][valid_idx][high_vel_idx]
+                        # true_angle_filtered = np.array(ros_data.encAngle)[vis_cue_cutoff_bool][high_vel_idx]
+                        # rel_angle_filtered = np.array(ros_data.relAngle)[vis_cue_cutoff_bool][high_vel_idx]
+                        est_gain_filtered = np.array(ros_data.estGain)[vis_cue_cutoff_bool][valid_idx]
+                        hipp_angle_filtered = np.array(ros_data.hippAngle)[vis_cue_cutoff_bool][valid_idx]
+                        true_angle_filtered = np.array(ros_data.encAngle)[vis_cue_cutoff_bool]
+                        rel_angle_filtered = np.array(ros_data.relAngle)[vis_cue_cutoff_bool]
 
-                        bins = np.arange(enc_times_high_vel[0], enc_times_high_vel[-1] + bin_size, bin_size)
+                        bins = np.arange(enc_times[0], enc_times[-1] + bin_size, bin_size)
                         if len(bins) < 2:
                             print("[WARNING] Not enough bins after filtering for high velocity. Skipping session.")
                             continue
                         try:
                             binned_est_gain, _, _ = stats.binned_statistic(
-                                enc_times_high_vel, est_gain_filtered, statistic='mean', bins=bins
+                                enc_times, est_gain_filtered, statistic='mean', bins=bins
                             )
                             binned_hipp_angle, _, _ = stats.binned_statistic(
-                                enc_times_high_vel, hipp_angle_filtered, statistic='mean', bins=bins
+                                enc_times, hipp_angle_filtered, statistic='mean', bins=bins
                             )
                             binned_true_angle, _, _ = stats.binned_statistic(
-                                enc_times_high_vel, true_angle_filtered, statistic='mean', bins=bins
+                                enc_times, true_angle_filtered, statistic='mean', bins=bins
                             )
-                            binned_high_vel, _, _ = stats.binned_statistic(
-                                enc_times_high_vel, high_vel_filtered, statistic='mean', bins=bins
+                            binned_vel, _, _ = stats.binned_statistic(
+                                enc_times, vel, statistic='mean', bins=bins
                             )
                             binned_rel_angle, _, _ = stats.binned_statistic(
-                                enc_times_high_vel, rel_angle_filtered, statistic='mean', bins=bins
+                                enc_times, rel_angle_filtered, statistic='mean', bins=bins
                             )
+
 
             
                         except ValueError as e:
@@ -1652,11 +1669,13 @@ class CEBRAAnalysis:
                             # Skip this session and continue with the next
                             continue
 
+                        high_vel_mask = binned_vel > self.vel_threshold
+
                         # valid_bins = (
                         #     ~np.isnan(binned_hipp_angle) &
                         #     ~np.isnan(binned_true_angle) &
                         #     ~np.isnan(binned_est_gain) &
-                        #     ~np.isnan(binned_high_vel)
+                        #     ~np.isnan(vel)
                         # )
                         # print("Number of non nans")
                         # print(sum(valid_bins))
@@ -1666,7 +1685,7 @@ class CEBRAAnalysis:
                         #     binned_hipp_angle = binned_hipp_angle[valid_bins]
                         #     binned_true_angle = binned_true_angle[valid_bins]
                         #     binned_est_gain = binned_est_gain[valid_bins]
-                        #     binned_high_vel = binned_high_vel[valid_bins]
+                        #     vel = vel[valid_bins]
                         #     binned_rel_angle = binned_rel_angle[valid_bins]
                         #     bins = bins[:-1][valid_bins]
 
@@ -1675,7 +1694,7 @@ class CEBRAAnalysis:
                             ~np.isnan(binned_hipp_angle) &
                             ~np.isnan(binned_true_angle) &
                             ~np.isnan(binned_est_gain) &
-                            ~np.isnan(binned_high_vel)
+                            ~np.isnan(binned_vel)
                         )
 
                         # Instead of removing them, just set invalid bins to NaN:
@@ -1683,18 +1702,21 @@ class CEBRAAnalysis:
                             binned_hipp_angle[~valid_bins] = np.nan
                             binned_true_angle[~valid_bins] = np.nan
                             binned_est_gain[~valid_bins] = np.nan
-                            binned_high_vel[~valid_bins] = np.nan
+                            binned_vel[~valid_bins] = np.nan
                             binned_rel_angle[~valid_bins] = np.nan
+                        
+
 
                         # Now interpolate those NaNs so the arrays still have the same length:
                         binned_hipp_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_hipp_angle)
                         binned_true_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_true_angle)
                         binned_est_gain   = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
-                        binned_high_vel   = CEBRAUtils.linear_interpolate_nans_1d(binned_high_vel)
+                        binned_vel   = CEBRAUtils.linear_interpolate_nans_1d(binned_vel)
                         binned_rel_angle  = CEBRAUtils.linear_interpolate_nans_1d(binned_rel_angle)
 
                         # Filter spike times
-                        all_spikes = []
+                        all_spikes_full = []
+                        all_spikes_train = []
                         skipped_clusters = 0
                         used_clusters = 0
                         used_cluster_iq_list = []
@@ -1717,13 +1739,22 @@ class CEBRAAnalysis:
                                 continue
                             
                             try:
-                                binned_spikes, _, _ = stats.binned_statistic(
+                                binned_spikes_full, _, _ = stats.binned_statistic(
+                                    spike_times_sec,
+                                    np.ones_like(spike_times_sec),
+                                    statistic='sum',
+                                    bins=bins
+                                )
+                                all_spikes_full.append(binned_spikes_full)
+
+                                binned_spikes_train, _, _ = stats.binned_statistic(
                                     spike_times_sec_high_vel,
                                     np.ones_like(spike_times_sec_high_vel),
                                     statistic='sum',
                                     bins=bins
                                 )
-                                all_spikes.append(binned_spikes)
+                                all_spikes_train.append(binned_spikes_train)
+
                             except ValueError as e:
                                 # Catch "Bin edges must be unique"
                                 print(f"[WARNING] Binning failed for session {session_idx}. Exception: {e}")
@@ -1739,12 +1770,13 @@ class CEBRAAnalysis:
                         avg_skipped_cluster_iq = np.mean(skipped_cluster_iq) if len(skipped_cluster_iq) else np.nan
                         avg_used_cluster_iq = np.mean(used_cluster_iq) if len(used_cluster_iq) else np.nan
 
-                        if not all_spikes:
+                        if not all_spikes_full:
                             print("[WARNING] No valid spike data after filtering. Skipping session.")
                             continue
 
                         # Build neural data
-                        neural_data_full_trial = np.array(all_spikes).T
+                        neural_data_full_trial = np.array(all_spikes_full).T
+                        neural_data_train_trial = np.array(all_spikes_train).T
                         neural_data_land_off = neural_data_full_trial[land_off_time_sec:,:]
                         neural_data_land_on = neural_data_full_trial[:land_off_time_sec,:]
 
@@ -1765,11 +1797,16 @@ class CEBRAAnalysis:
                             binned_est_gain = binned_est_gain[:min_bins]
                             binned_hipp_angle = binned_hipp_angle[:min_bins]
                             binned_true_angle = binned_true_angle[:min_bins]
-                            binned_high_vel = binned_high_vel[:min_bins]
+                            binned_vel = binned_vel[:min_bins]
                             bins = bins[:min_bins]
 
                         print("neural data shape")
                         print(neural_data_full_trial.shape[0])
+
+
+                        neural_data_fit = neural_data_train_trial[high_vel_mask, :]
+                        neural_data_low_vel = neural_data_full_trial[~high_vel_mask,:]
+                        print(neural_data_low_vel.shape)
 
                         
 
@@ -1785,37 +1822,62 @@ class CEBRAAnalysis:
                         # Attempt multiple runs if SI < some threshold
                         skip_session = False
                         for temp in temperature_list:
+                            output_dimension = 3
                             rerun_count = 0
                             while rerun_count < self.max_num_reruns:
+                                print(neural_data_fit.shape)
+                                print(neural_data_full_trial.shape)
                                 if self.include_land_off and self.whole_trial_embeddings: # If you want to include the data points after the landmarks/optic flow turned off or not
-                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
-                                        neural_data_fit=neural_data_full_trial,
-                                        neural_data_embeddings=neural_data_full_trial,
-                                        output_dimension=3,
+                                    print("in here")
+                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
+                                        neural_data_fit=neural_data_fit,
+                                        neural_data_embeddings=neural_data_fit,
+                                        neural_data_low_vel=neural_data_low_vel,
+                                        output_dimension=output_dimension,
                                         temperature=temp
                                     )
                                 elif not self.include_land_off and self.whole_trial_embeddings:
-                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
                                         neural_data_fit=neural_data_land_on,
                                         neural_data_embeddings=neural_data_full_trial,
-                                        output_dimension=3,
+                                        neural_data_low_vel=neural_data_low_vel,
+                                        output_dimension=output_dimension,
                                         temperature=temp
                                     )
                                 elif not self.include_land_off and not self.whole_trial_embeddings:
-                                    embeddings_high_dim = CEBRAUtils.apply_cebra(
+                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
                                             neural_data_fit=neural_data_land_on,
                                             neural_data_embeddings=neural_data_land_on,
-                                            output_dimension=3,
+                                            neural_data_low_vel=neural_data_low_vel,
+                                            output_dimension=output_dimension,
                                             temperature=temp
                                     )
 
                                 embeddings_3d = embeddings_high_dim.copy()
 
+                                full_embeddings = np.empty((neural_data_full_trial.shape[0],embeddings_3d.shape[1]))
+                                full_embeddings[:] = np.nan
+                                full_embeddings[high_vel_mask,:] = embeddings_3d
+                                embeddings_3d = full_embeddings
+
+                                embeddings_3d = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d)
+
+
+                                print("shape of embeddings after fitting")
+                                print(embeddings_3d.shape)
+                                print("current hip angle shape")
+                                print(binned_hipp_angle.shape)
+                                print("embeddings low vel")
+                                print(embeddings_low_vel.shape)
+
+        
+
+
                                 # Concatenate according to the size of embeddings_3d decided by the type of trial (land_on,land_off, etc.)
                                 binned_hipp_angle = binned_hipp_angle[:embeddings_3d.shape[0]]
                                 binned_true_angle = binned_true_angle[:embeddings_3d.shape[0]]
                                 binned_est_gain = binned_est_gain[:embeddings_3d.shape[0]]
-                                binned_high_vel = binned_high_vel[:embeddings_3d.shape[0]]
+                                binned_vel = binned_vel[:embeddings_3d.shape[0]]
 
                                 # # Build mask for NaNs
                                 # nan_mask_3d = (
@@ -1823,13 +1885,13 @@ class CEBRAAnalysis:
                                 #     ~np.isnan(binned_hipp_angle) &
                                 #     ~np.isnan(binned_true_angle) &
                                 #     ~np.isnan(binned_est_gain) &
-                                #     ~np.isnan(binned_high_vel)
+                                #     ~np.isnan(vel)
                                 # )
                                 # embeddings_3d = embeddings_3d[nan_mask_3d, :]
                                 # binned_hipp_angle_temp = binned_hipp_angle[nan_mask_3d]
                                 # binned_true_angle_temp = binned_true_angle[nan_mask_3d]
                                 # binned_est_gain_temp = binned_est_gain[nan_mask_3d]
-                                # binned_high_vel_temp = binned_high_vel[nan_mask_3d]
+                                # vel_temp = vel[nan_mask_3d]
 
                                 # # Outlier removal
                                 # if self.rm_outliers:
@@ -1838,7 +1900,7 @@ class CEBRAAnalysis:
                                 #     binned_hipp_angle_temp = binned_hipp_angle_temp[inlier_indices_3d]
                                 #     binned_true_angle_temp = binned_true_angle_temp[inlier_indices_3d]
                                 #     binned_est_gain_temp = binned_est_gain_temp[inlier_indices_3d]
-                                #     binned_high_vel_temp = binned_high_vel_temp[inlier_indices_3d]
+                                #     vel_temp = vel_temp[inlier_indices_3d]
                                 # Outlier removal
                                 if self.rm_outliers:
                                     # Get full-length boolean mask
@@ -1852,19 +1914,25 @@ class CEBRAAnalysis:
                                     binned_hipp_angle[outlier_mask_3d] = np.nan
                                     binned_true_angle[outlier_mask_3d] = np.nan
                                     binned_est_gain[outlier_mask_3d] = np.nan
-                                    binned_high_vel[outlier_mask_3d] = np.nan
+                                    binned_vel[outlier_mask_3d] = np.nan
 
                                     # Interpolate so there are no NaNs but the same shape
                                     embeddings_3d = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d)
                                     binned_hipp_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_hipp_angle)
                                     binned_true_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_true_angle)
                                     binned_est_gain = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
-                                    binned_high_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_high_vel)
+                                    binned_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_vel)
 
                                 if embeddings_3d.shape[0] < 201:
                                     print(f"length of embeddings is: {embeddings_3d.shape[0]}, skipping session {session_idx}")
                                     skip_session = True
                                     break
+
+                                embeddings_3d_mean = np.mean(embeddings_3d, axis=0)
+                                embeddings_low_vel_mean = np.mean(embeddings_low_vel,axis=0)
+
+                                embeddings_low_vel = embeddings_low_vel - embeddings_low_vel_mean
+                                embeddings_3d = embeddings_3d - embeddings_3d_mean
 
                                 # Run persistent homology
 
@@ -1895,10 +1963,7 @@ class CEBRAAnalysis:
                                                         % (2 * np.pi))
                                 binned_hipp_angle_rad = (binned_hipp_angle_rad 
                                                         % (2 * np.pi))
-                                
-                                embeddings_3d_mean = np.mean(embeddings_3d, axis=0)
-
-                                embeddings_3d = embeddings_3d - embeddings_3d_mean
+                        
 
                                 # Compute SI on 3D embeddings with hippocampal angle
                                 SI_params = {
@@ -2067,7 +2132,7 @@ class CEBRAAnalysis:
 
             
 
-                            # Static 3D plot (example)
+                            # Static 3D plot of embeddings
                             from mpl_toolkits.mplot3d import Axes3D
                             fig_3d = plt.figure(figsize=(10, 8))
                             ax3d = fig_3d.add_subplot(111, projection='3d')
@@ -2103,7 +2168,7 @@ class CEBRAAnalysis:
                                 var=binned_est_gain, true_angle=binned_true_angle_rad_unwrap
                             )
                             _, sorted_vel, _ = CEBRAUtils.get_var_over_lap(
-                                var=binned_high_vel, true_angle=binned_true_angle_rad_unwrap
+                                var=vel, true_angle=binned_true_angle_rad_unwrap
                             )
                             # Hipp frame
                             hipp_lap_number, hipp_decode_H, hipp_sorted_lap_number = CEBRAUtils.get_var_over_lap(
@@ -2132,7 +2197,7 @@ class CEBRAAnalysis:
                                 decode_H=sorted_decode_H,
                                 lap_number=sorted_lap_number,
                                 session_idx=session_idx,
-                                behav_var=binned_high_vel,
+                                behav_var=vel,
                                 session=session,
                                 save_path=H_plot_path,
                                 tag='vel_no_ma',
@@ -2163,7 +2228,7 @@ class CEBRAAnalysis:
                                 decode_H=sorted_decode_H,
                                 lap_number=sorted_lap_number,
                                 session_idx=session_idx,
-                                behav_var=binned_high_vel,
+                                behav_var=vel,
                                 session=session,
                                 save_path=H_plot_path,
                                 tag='vel_ma_20',
@@ -2177,7 +2242,7 @@ class CEBRAAnalysis:
                             CEBRAUtils.plot_Hs_moving_avg(
                                 est_H=sorted_H_est,
                                 decode_H=sorted_decode_H,
-                                behav_var=binned_high_vel,
+                                behav_var=vel,
                                 behav_var_name="vel",
                                 session_idx=session_idx,
                                 session=session,
@@ -2210,9 +2275,13 @@ class CEBRAAnalysis:
                                 expt_file=session,
                                 specifier=np.nan,
                                 neural_data_full_trial=neural_data_full_trial,
+                                neural_data_fit=neural_data_fit,
+                                neural_data_low_vel=neural_data_low_vel,
+                                embeddings_low_vel=embeddings_low_vel,
                                 neural_data_land_off=neural_data_land_off,
                                 neural_data_land_on=neural_data_land_on,
                                 embeddings_3d=embeddings_3d,
+                                high_vel_idx=high_vel_idx,
                                 H0_value=H0_value,
                                 H1_value=H1_value,
                                 betti_0=betti_0,
@@ -2222,7 +2291,7 @@ class CEBRAAnalysis:
                                 binned_hipp_angle=binned_hipp_angle_rad_unwrap,
                                 binned_true_angle=binned_true_angle_rad_unwrap,
                                 binned_est_gain=binned_est_gain, 
-                                binned_high_vel=binned_high_vel,
+                                binned_vel=binned_vel,
                                 decoded_angles=decoded_angles_unwrap,
                                 filtered_decoded_angles_unwrap=filtered_decoded_angles_unwrap,
                                 decode_H=decode_H,
@@ -2266,39 +2335,39 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'just_session_35'
+    save_folder = 'velocity_test_sesasd'
 
     #Run analysis with no including when landmarks/optic flow are off
-    analysis_train_land_on = CEBRAAnalysis(
-        session_choose=False,
-        max_num_reruns=1,
-        run_persistent_homology=False,
-        include_land_off=False,
-        whole_trial_embeddings=True,
-        save_folder=save_folder,
-        trial_type='train_land_on'
-    )
+    # analysis_train_land_on = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=False,
+    #     whole_trial_embeddings=True,
+    #     save_folder=save_folder,
+    #     trial_type='train_land_on'
+    # )
 
     #Run analysis with including when landmarks/optic flow off
-    analysis_full_trial = CEBRAAnalysis(
-        session_choose=False,
-        max_num_reruns=1,
-        run_persistent_homology=False,
-        include_land_off=True,
-        whole_trial_embeddings=True,
-        save_folder=save_folder,
-        trial_type='full_trial'
-    )
+    # analysis_full_trial = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=True,
+    #     whole_trial_embeddings=True,
+    #     save_folder=save_folder,
+    #     trial_type='full_trial'
+    # )
 
-    analysis_land_on = CEBRAAnalysis(
-        session_choose=False,
-        max_num_reruns=1,
-        run_persistent_homology=False,
-        include_land_off=False,
-        whole_trial_embeddings=False,
-        save_folder=save_folder,
-        trial_type='land_on'
-    )
+    # analysis_land_on = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=False,
+    #     whole_trial_embeddings=False,
+    #     save_folder=save_folder,
+    #     trial_type='land_on'
+    # )
 
     # # analysis_land_on.run_analysis()
     # analysis_full_trial.run_analysis()

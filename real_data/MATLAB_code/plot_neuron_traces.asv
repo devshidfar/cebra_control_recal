@@ -1,4 +1,4 @@
-close all;
+close all
 
 % Store datasets in a struct to avoid conflicts with 'full'
 % dataset_structs.land_on = land_on;

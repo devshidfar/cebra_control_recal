@@ -62,5 +62,5 @@ end
 % Usage example:
 close all;
 i=1
-H_error = full_trial.sessions{i}.decode_H - full_trial.sessions{i}.binned_est_gain
-plotVelocityHistogram(full_trial.sessions{i}.binned_high_vel, full_trial.sessions{i}.binned_est_gain,"Fourier H");
+H_error = full_trial_1.sessions{i}.decode_H - full_trial_1.sessions{i}.binned_est_gain
+plotVelocityHistogram(full_trial_1.sessions{i}.binned_vel, abs(full_trial_1.sessions{i}.decode_H-full_trial_1.sessions{i}.binned_est_gain),"Fourier H");
