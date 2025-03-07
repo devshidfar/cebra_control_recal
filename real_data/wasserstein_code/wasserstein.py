@@ -17,16 +17,8 @@ def rotate_embeddings(embeddings, rotation_matrix):
     """Apply a given rotation matrix to the embeddings."""
     return embeddings @ rotation_matrix.T
 
-def compute_emd_3d(source_cloud, target_cloud):
-    """Compute true 3D Earth Mover's Distance (EMD) using Optimal Transport."""
-    n = min(len(source_cloud), len(target_cloud))  # Match sizes if different
-    cost_matrix = np.linalg.norm(source_cloud[:n, None] - target_cloud[:n], axis=2)
-    weights_source = np.ones(n) / n
-    weights_target = np.ones(n) / n
-    emd_value = ot.emd2(weights_source, weights_target, cost_matrix)  # EMD squared
-    return emd_value
 
-def compute_partial_emd(source_cloud, target_cloud, mass_ratio=None):
+def compute_emd(source_cloud, target_cloud):
     """
     Compute partial Earth Mover's Distance (EMD) between two 3D point clouds 
     of different sizes using POT (Python Optimal Transport).
@@ -49,15 +41,8 @@ def compute_partial_emd(source_cloud, target_cloud, mass_ratio=None):
     weights_source = np.ones(N) / N
     weights_target = np.ones(M) / M
 
-    # Compute Partial Wasserstein Distance (partial EMD)
-    # mass_ratio = (min(N,M)) /(max(N,M))
-    # mass_ratio = min(np.sum(weights_source), np.sum(weights_target))
-    # transport_plan = ot.partial.partial_wasserstein(weights_source, weights_target, cost_matrix, m=mass_ratio)
-    # emd_value =  np.sum(transport_plan * cost_matrix)
-    emd_value = ot.emd2(weights_source,weights_target,cost_matrix)
-    # SWD = ot.sliced_wasserstein_distance(source_cloud, target_cloud, n_projections=50)
-
-    # print(f"Sliced Wasserstein Distance: {SWD:.4f}")
+    emd_value = ot.emd2(weights_source,weights_target,cost_matrix) # Returns the cost (rather than ot.
+    #emd which returns ot matrix)
 
     return emd_value
 
@@ -70,7 +55,7 @@ def find_best_rotation(source_cloud, target_cloud, num_trials=100):
     for _ in range(num_trials):
         rotation = random_rotation()
         rotated_cloud = rotate_embeddings(source_cloud, rotation)
-        distance = compute_partial_emd(rotated_cloud, target_cloud)
+        distance = compute_emd(rotated_cloud, target_cloud)
     
         if distance < min_distance:
             min_distance = distance
@@ -110,21 +95,30 @@ if __name__ == "__main__":
     # Set mode to either "within" or "across"
     # "within": compare multiple rotated clouds within each trial of a single session.
     # "across": take one trial (e.g., trial 0) from each session and compare across sessions.
-    mode = "across"  # or "within"
+    mode = "across"  # "across" or "within"
 
     # Load embeddings
-    file_path = '/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/trial_type_test/trial_type_test_all_sessions_data.mat'
+    file_path = '/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/results/all_rat_913/all_rat_913_all_sessions_data.mat'
     mat_data = loadmat(file_path, struct_as_record=False, squeeze_me=True)
     
-    trials = [mat_data[f'full_trial_{i}'] for i in range(1, 5)]
-    sessions = [trial.sessions for trial in trials]
-    # embeddings_list[i][k] is the embeddings_3d for session i, trial k.
-    embeddings_list = [[session.embeddings_3d for session in s] for s in sessions]
+    if mode == "within":
+        trials = [mat_data[f'full_trial_{i}'] for i in range(1, 5)]
+        sessions = [trial.sessions for trial in trials]
+        mean_H_error = [trial.mean_H_difference for trial in trials]
+        # embeddings_list[i][k] is the embeddings_3d for session i, trial k.
+        embeddings_list = [[session.embeddings_3d for session in s] for s in sessions]
+    elif mode == "across":
+        trials = mat_data[f'full_trial_{1}']
+        sessions = trials.sessions
+        mean_H_error = [session.mean_H_difference for session in sessions]
+        embeddings_list = [session.embeddings_3d for session in sessions]
+
+
 
 
     save_dir = "wasserstein_plots"
     os.makedirs(save_dir, exist_ok=True)
-    num_trials = 15  # Number of sessions/trials to compare
+    num_trials = 15 # Number of sessions/trials to compare
 
     if mode == "within":
         # Within-session comparison: For each trial in a given session, compare rotated clouds from different sources.
@@ -156,7 +150,7 @@ if __name__ == "__main__":
             pairwise_matrix = np.zeros((n_sources, n_sources))
             for i in range(n_sources):
                 for j in range(n_sources):
-                    pairwise_matrix[i, j] = compute_emd_3d(best_rotated_cloud[i], best_rotated_cloud[j])
+                    pairwise_matrix[i, j] = compute_emd(best_rotated_cloud[i], best_rotated_cloud[j])
     
             # Save pairwise distance matrix to a MAT file for this trial.
             mat_save_path = os.path.join(save_dir, f"pairwise_distance_trial_{k}.mat")
@@ -165,16 +159,19 @@ if __name__ == "__main__":
     
     elif mode == "across":
         # Across-session comparison: Compare one trial (e.g., trial 0) across sessions.
-        start_point = 0
-        target_cloud = embeddings_list[0][7]  # Take the {start_point} trial from session  as the target
-        source_clouds = [embeddings_list[0][i] for i in range(start_point, num_trials)]
+        start_point = 10
+        target_cloud = embeddings_list[start_point]  # Take the {start_point} trial from session  as the target
+        source_clouds = [embeddings_list[i] for i in range(start_point, start_point+num_trials)]
+
+        print(target_cloud.shape)
+        print(source_clouds[0].shape)
     
         N = source_clouds[0].shape[0]
-        best_rotation = np.zeros((num_trials-start_point, 3, 3))
+        best_rotation = np.zeros((num_trials, 3, 3))
         best_rotated_cloud = []
-        min_distance = np.zeros(num_trials-start_point)
+        min_distance = np.zeros(num_trials)
     
-        for i in range(num_trials-start_point):
+        for i in range(num_trials):
             best_rotation[i], best_rotated_cloud_temp, min_distance[i] = find_best_rotation(source_clouds[i], target_cloud)
             best_rotated_cloud.append(best_rotated_cloud_temp)
             plot_point_clouds_interactive(
@@ -190,7 +187,7 @@ if __name__ == "__main__":
         pairwise_matrix = np.zeros((n_sources, n_sources))
         for i in range(n_sources):
             for j in range(n_sources):
-                pairwise_matrix[i, j] = compute_partial_emd(best_rotated_cloud[i], best_rotated_cloud[j])
+                pairwise_matrix[i, j] = compute_emd(best_rotated_cloud[i], best_rotated_cloud[j])
     
         overall_save_path = os.path.join(save_dir, "across_sessions_pairwise_distance.mat")
         savemat(overall_save_path, {'pairwise_distance_matrix': pairwise_matrix})
@@ -199,15 +196,17 @@ if __name__ == "__main__":
         backup_path = file_path.replace(".mat", "_backup.mat")  # Create a backup file
         savemat(backup_path, mat_data)  # Save original file as a backup
 
-        mat_data['pairwise_EMD_distance_matrix'] = pairwise_matrix
-        mat_data['sesions_for_EMD'] = [trials[0].sessions[i].session_idx for i in range(start_point,num_trials)]
-        # Save the modified data to the original file
-        savemat(backup_path, mat_data)
+        if mode == "across":
+            mat_data['pairwise_EMD_distance_matrix'] = pairwise_matrix
+            mat_data['sesions_for_EMD'] = [trials.sessions[i].session_idx for i in range(start_point,start_point + num_trials)]
+            mat_data['mean_H_error'] = [trials.sessions[i].mean_H_difference for i in range(start_point,start_point + num_trials)]
+            # Save the modified data to the original file
+            savemat(backup_path, mat_data)
 
-        print(f"Backup saved at: {backup_path}")
-        print(f"Updated .mat file saved at: {file_path}")
+            print(f"Backup saved at: {backup_path}")
+            print(f"Updated .mat file saved at: {file_path}")
     
-        # Additionally, create an interactive Plotly figure comparing the min distances.
+        # Create an interactive Plotly figure comparing the min distances.
         fig = go.Figure()
         sessions_list = list(range(1, num_trials))  # source sessions 1 to num_trials-1
         fig.add_trace(go.Scatter(

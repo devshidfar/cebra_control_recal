@@ -115,7 +115,7 @@ function lap_data = plotHs(decode_H, binned_est_gain, lap_number, session_idx, d
     end
 
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-    % Standard and Overlay Modes (keeping old functionality)
+    % Standard and Overlay Modes
     if ~overlay_laps
         %% Standard Plot Mode: Plot vs. lap_number (both decode_H and binned_est_gain)
         fig = figure('Visible', 'off');
@@ -146,7 +146,7 @@ function lap_data = plotHs(decode_H, binned_est_gain, lap_number, session_idx, d
         % Store lap data in a cell array
         lap_data = cell(1, max_lap - min_lap + 1);
         
-        for lap = min_lap:max_lap
+        for lap = min_lap:20:max_lap
             % Extract data for the current lap.
             idx = (lap_number >= lap) & (lap_number < lap + 1);
             % Skip laps with too few data points.
@@ -189,12 +189,12 @@ function lap_data = plotHs(decode_H, binned_est_gain, lap_number, session_idx, d
 end
 
 % Example usage:
-for i = 1:2
+for i = 11:12
     lap_data = plotHs(full_trial_1.sessions{i}.lap_decode_H, ...
                       full_trial_1.sessions{i}.lap_est_gain, ...
                       full_trial_1.sessions{i}.lap_number, ...
                       full_trial_1.sessions{i}.session_idx, ...
-                      'Full Trial True Laps', true, true, 0.05);
+                      'Full Trial Hippocampal Laps', true, false, 0.05);
     % Now lap_data contains:
     %   - lap_data.min_bin: the bin center with the minimum standard deviation
     %   - lap_data.min_std: the minimum standard deviation

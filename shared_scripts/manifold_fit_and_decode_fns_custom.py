@@ -43,42 +43,19 @@ class PiecewiseLinearFit:
     def get_new_initial_knots(self, method='kmedoids'): #edited from Chaudhuri et al.
         '''Place the initial knots for the optimization to use.'''
         print(f"method: {method}")
-        if method == 'dbscan':
-            print("Doing DBSCAN initial clustering")
-            clustering = DBSCAN(eps=0.1, min_samples=6).fit(self.data_to_fit)
-            labels = clustering.labels_
-            unique_labels = set(labels)
-            unique_labels.discard(-1)  # Remove noise label
-            cluster_centers = []
-            print(f"DBSCAN labels: {labels}")
-            print(f"Unique valid labels (excluding noise): {unique_labels}")
-
-            for label in unique_labels:
-                cluster_points = self.data_to_fit[labels == label]
-                cluster_center = np.mean(cluster_points, axis=0)
-                cluster_centers.append(cluster_center)
-            cluster_centers = np.array(cluster_centers)
-            # Adjust the number of knots as needed
-            if len(cluster_centers) >= self.nKnots:
-                return cluster_centers[:self.nKnots]
-            else:
-                # Sample additional knots from high-density regions
-                additional_knots = self.data_to_fit[np.random.choice(len(self.data_to_fit), self.nKnots - len(cluster_centers), replace=False)]
-                return np.vstack([cluster_centers, additional_knots])
-        elif method == 'kmeans':
+        if method == 'kmeans':
             print("Doing K-Means initial clustering")
             kmeans = KMeans(n_clusters=self.nKnots, max_iter=3000).fit(self.data_to_fit)
             return kmeans.cluster_centers_
         elif method == 'kmedoids':
             print("Doing K-Medoids initial clustering")
             # Initialize K-Medoids with desired parameters
-            kmedoids = KMedoids(n_clusters=self.nKnots, method='pam', metric='euclidean', random_state=42)
+            kmedoids = KMedoids(n_clusters=self.nKnots, method='pam', metric='cosine', random_state=42)
             kmedoids.fit(self.data_to_fit)
-            print(f"cluster centers: {kmedoids.cluster_centers_}")
+            #print(f"cluster centers: {kmedoids.cluster_centers_}")
             return kmedoids.cluster_centers_
         else:
-            print("hi")
-            print('Unknown method')
+            print("Incorrect initial knot method, error.")
 
     def order_knots(self, knots, method='nearest'):
         '''Order the initial knots so that we can draw a curve through them. 
@@ -110,11 +87,22 @@ class PiecewiseLinearFit:
         return ord_knots
     
     def compute_curvature(self, loop_knots):
-        segments = loop_knots[1:] - loop_knots[:-1]  # Shape: (n_knots, n_dims)
-        directions = segments / (np.linalg.norm(segments, axis=1)[:, np.newaxis]+1e-7) # Normalize
-        delta_directions = directions[1:] - directions[:-1]  # Changes in direction
-        curvature = np.sum(np.linalg.norm(delta_directions, axis=1)**2)  # Sum of squared changes
-        return curvature
+        """
+        Computes the total curvature of the loop_knots sequence.
+
+        Curvature is measured as the total change in direction between 
+        consecutive segments, normalized by segment length.
+        """
+        segments = loop_knots[1:] - loop_knots[:-1]  # Compute segment vectors
+        segment_lengths = np.linalg.norm(segments, axis=1) + 1e-7  # Avoid zero division
+        directions = segments / segment_lengths[:, np.newaxis]  # Normalize to unit direction vectors
+        delta_directions = directions[1:] - directions[:-1]  # Change in direction
+
+        # Compute curvature as the sum of normalized direction changes
+        curvatures = np.linalg.norm(delta_directions, axis=1) / (segment_lengths[1:] + 1e-7)
+        total_curvature = np.sum(curvatures)  # Sum of absolute changes
+
+        return total_curvature
     
     def huber_loss(self, dists, delta):
             return np.where(

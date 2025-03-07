@@ -35,6 +35,11 @@ from ripser import ripser
 from persim import plot_diagrams
 from dataclasses import dataclass, asdict
 from sklearn.metrics import pairwise_distances
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from scipy.interpolate import splprep, splev
+import plotly.graph_objects as go
+import plotly.io as pio
 
 # =============== #
 # CLASS: CEBRAUtils
@@ -352,6 +357,312 @@ class CEBRAUtils:
     #     print(f"the number of outliers {noiseIdx}")
     #     return noiseIdx
 
+    @staticmethod
+    def plot_embeddings_static(
+                            embeddings = None,
+                            embeddings_low_vel = None,
+                            principal_curve = None,
+                            behav_var_name='Low Vel',
+                            behav_var=None,
+                            session_idx=None,
+                            save_path=None
+                            ):
+
+        # Static 3D plot of embeddings
+        # Create figure
+        fig_3d = plt.figure(figsize=(10, 8))
+        ax3d = fig_3d.add_subplot(111, projection='3d')
+
+        # Plot embeddings_3d with color mapping
+        scatter = ax3d.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2],
+                                c=behav_var, cmap='jet', s=5, alpha=0.7)
+
+        # Overlay low-velocity embeddings in pink
+        ax3d.scatter(embeddings_low_vel[:, 0], embeddings_low_vel[:, 1], embeddings_low_vel[:, 2],
+                    color='magenta', s=10, label=behav_var_name, alpha=0.8)
+
+        # Plot principal curve if available
+        if principal_curve is not None:
+            ax3d.plot(principal_curve[:, 0], principal_curve[:, 1], principal_curve[:, 2],
+                    color='red', linewidth=2, label="Principal Curve")
+
+        # Add colorbar
+        fig_3d.colorbar(scatter, label='Hipp Angle (rad)')
+
+        # Labels & legend
+        ax3d.set_title(f"3D Embeddings (Session {session_idx})")
+        ax3d.legend()
+
+        # Show the plot
+        plt.show()
+
+        plt.savefig(f"{save_path}/3D_embeddings_session{session_idx}",dpi=300,bbox_inches='tight')
+    
+        return
+    
+    @staticmethod
+    def plot_embeddings_interactive(
+                            embeddings=None,
+                            embeddings_low_vel=None,
+                            principal_curve=None,
+                            behav_var_name='Low Vel',
+                            behav_var=None,
+                            session_idx=None,
+                            save_html=True,
+                            save_path=None,
+                            html_filename="3D_Embeddings_Interactive.html"
+                            ):
+        """
+        Interactive 3D plot of embeddings using Plotly.
+
+        Parameters:
+        -----------
+        embeddings : np.array, shape (N, 3)
+            3D embeddings, color-coded by `behav_var`.
+        embeddings_low_vel : np.array, shape (M, 3)
+            Low-velocity embeddings, plotted in pink.
+        principal_curve : np.array, shape (K, 3), optional
+            Principal curve to overlay.
+        behav_var_name : str, optional
+            Label for the low-velocity embeddings.
+        behav_var : np.array, shape (N,)
+            Values used for coloring the main embeddings.
+        session_idx : int, optional
+            Session index for labeling.
+        save_html : bool, optional
+            If True, saves the interactive figure as an HTML file.
+        html_filename : str, optional
+            Filename for the saved HTML file.
+        """
+
+
+        # Create a Plotly figure
+        fig = go.Figure()
+
+        # Scatter plot for embeddings (color-coded by behavioral variable)
+        fig.add_trace(go.Scatter3d(
+            x=embeddings[:, 0],
+            y=embeddings[:, 1],
+            z=embeddings[:, 2],
+            mode='markers',
+            marker=dict(
+                size=5,
+                color=behav_var,  # Color by behavior variable
+                colorscale='jet',
+                opacity=0.7,
+                colorbar=dict(title="Hipp Angle (rad)")
+            ),
+            name="3D Embeddings"
+        ))
+
+        # Scatter plot for low-velocity embeddings (Pink)
+        if embeddings_low_vel is not None:
+            fig.add_trace(go.Scatter3d(
+                x=embeddings_low_vel[:, 0],
+                y=embeddings_low_vel[:, 1],
+                z=embeddings_low_vel[:, 2],
+                mode='markers',
+                marker=dict(size=8, color='magenta', opacity=0.8),
+                name=behav_var_name
+            ))
+
+        # Line plot for principal curve (if available)
+        if principal_curve is not None:
+            fig.add_trace(go.Scatter3d(
+                x=principal_curve[:, 0],
+                y=principal_curve[:, 1],
+                z=principal_curve[:, 2],
+                mode='lines',
+                line=dict(color='red', width=4),
+                name="Principal Curve"
+            ))
+
+        mean_embeddings = np.mean(embeddings, axis=0)
+        mean_low_vel = np.mean(embeddings_low_vel, axis=0)
+
+        text_annotation = f"""
+        <b>Mean Embeddings:</b><br>
+        X: {mean_embeddings[0]:.3f}, Y: {mean_embeddings[1]:.3f}, Z: {mean_embeddings[2]:.3f}<br>
+        <b>Mean Low Vel:</b><br>
+        X: {mean_low_vel[0]:.3f}, Y: {mean_low_vel[1]:.3f}, Z: {mean_low_vel[2]:.3f}
+        """
+
+        fig.add_annotation(
+            text=text_annotation,
+            showarrow=False,
+            xref="paper", yref="paper",
+            x=0.05, y=0.95,
+            bordercolor="black",
+            borderwidth=2,
+            bgcolor="white",
+            opacity=0.8
+        )
+
+        # Set layout
+        fig.update_layout(
+            title=f"3D Interactive Embeddings (Session {session_idx})",
+            scene=dict(
+                xaxis_title="X",
+                yaxis_title="Y",
+                zaxis_title="Z"
+            ),
+            margin=dict(l=0, r=0, b=0, t=40)
+        )
+        save_file = os.path.join(save_path,html_filename)
+        pio.write_html(fig,save_file)
+
+
+        return fig  # Returning fig in case further customization is needed
+
+    @staticmethod
+    def fit_b_spline_to_embeddings(embeddings, ref_angle=None, session_idx=None, session=None, 
+                               results_save_path=None, fit_params=None, dimension_3d=None, verbose=False):
+        """
+        Fits a B-spline curve to high-dimensional neural embeddings and outputs the spline knots.
+        
+        Parameters
+        ----------
+        embeddings : np.array, shape (N, d)
+            High-dimensional data points (e.g., neural embeddings).
+        ref_angle : array-like, optional
+            Reference angle for alignment. For example, ref_angle[3] is used to shift the parameterization.
+        session_idx : int, optional
+            Session index (used for saving plots).
+        session : any, optional
+            Session identifier.
+        results_save_path : str, optional
+            Directory in which to save plots (if desired).
+        fit_params : dict, optional
+            Dictionary of parameters for fitting. Example:
+                {
+                    'num_knots': 10,         # Number of initial knots
+                    'smoothing': 0,          # Smoothing factor (s) for splprep
+                    'degree': 3,             # Degree of the B-spline (k)
+                    'num_curve_points': 200, # Number of points at which to evaluate the final spline curve
+                    'knot_order': 'pca'      # Method to order knots (here we use PCA)
+                }
+        dimension_3d : bool or int, optional
+            If True (or 1) and the embeddings are 3D, a 3D scatter plot of the embeddings and initial knots is generated.
+        verbose : bool, optional
+            If True, prints debug statements.
+            
+        Returns
+        -------
+        curve_points : np.array, shape (M, d)
+            Evaluated B-spline curve points.
+        tck : tuple
+            The tuple (t, c, k) representing the spline, where:
+                t = knot vector,
+                c = list of B-spline coefficients (control points for each dimension),
+                k = degree of the spline.
+        u_fine : np.array
+            Parameter values corresponding to the curve_points.
+        final_knots : np.array
+            The ordered and refined initial knots from clustering.
+        """
+        # Set default fit parameters if none provided.
+        if fit_params is None:
+            fit_params = {
+                'num_knots': 10,
+                'smoothing': 0,
+                'degree': 3,
+                'num_curve_points': 200,
+                'knot_order': 'pca'
+            }
+        
+        # --- Step 1: Obtain Initial Knots via Clustering ---
+        num_knots = fit_params.get('num_knots', 10)
+        if verbose:
+            print("Clustering embeddings to obtain initial knots...")
+        # Using KMeans as a proxy for k-medoids clustering.
+        kmeans = KMeans(n_clusters=num_knots, random_state=0).fit(embeddings)
+        initial_knots = kmeans.cluster_centers_
+        
+        # --- Step 2: Order the Knots ---
+        if verbose:
+            print("Ordering knots using PCA...")
+        # Project the initial knots onto the first principal component and sort.
+        pca = PCA(n_components=1)
+        proj = pca.fit_transform(initial_knots)
+        order = np.argsort(proj[:, 0])
+        ordered_knots = initial_knots[order]
+        
+        # --- Step 3: Remove Outlier Knots ---
+        # Remove knots that are far from their neighbors (up to 5 removals).
+        final_knots = ordered_knots.copy()
+        knots_removed = 0
+        while True:
+            if final_knots.shape[0] < 2:
+                break
+            segments = np.diff(final_knots, axis=0)
+            knot_dists = np.linalg.norm(segments, axis=1)
+            max_dist = np.max(knot_dists)
+            median_dist = np.median(knot_dists)
+            if verbose:
+                print(f"Max segment distance: {max_dist:.3f}, Median segment distance: {median_dist:.3f}")
+            if max_dist > 1.5 * median_dist and knots_removed < 5:
+                max_idx = np.argmax(knot_dists)
+                final_knots = np.delete(final_knots, max_idx+1, axis=0)
+                knots_removed += 1
+                if verbose:
+                    print(f"Removed knot at index {max_idx+1}. Total removed: {knots_removed}")
+            else:
+                break
+        
+        # --- Optional: Plot Initial/Final Knots (for 3D data) ---
+        if dimension_3d and results_save_path is not None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111, projection='3d')
+            ax.scatter(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], c='gray', alpha=0.5, label='Embeddings')
+            ax.scatter(final_knots[:, 0], final_knots[:, 1], final_knots[:, 2], c='red', label='Initial Knots')
+            ax.set_title(f"Initial Knots for Session {session_idx}")
+            ax.legend()
+            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.png")
+            plt.savefig(plot_save_path)
+            plt.close()
+        
+        # --- Step 4: Fit a B-spline to the Embeddings ---
+        if verbose:
+            print("Fitting B-spline to embeddings using splprep...")
+        # splprep expects the data as a list of 1D arrays (one per dimension).x
+            print("Embeddings shape:", embeddings.shape)
+            print("Embeddings dtype:", embeddings.dtype)
+
+        dims = embeddings.shape[1]
+        data = [embeddings[:, i] for i in range(dims)]
+        print("Data shapes:", [d.shape for d in data])
+        tck, u = splprep(data, s=fit_params.get('smoothing', 0), k=fit_params.get('degree', 3))
+        # The tck tuple contains:
+        #   tck[0]: the knot vector,
+        #   tck[1]: the B-spline coefficients (control points for each dimension),
+        #   tck[2]: the degree of the spline.
+        
+        # --- Step 5: Evaluate the Spline at Fine Parameter Values ---
+        num_curve_points = fit_params.get('num_curve_points', 200)
+        u_fine = np.linspace(0, 1, num_curve_points)
+        curve_eval = splev(u_fine, tck)
+        curve_points = np.stack(curve_eval, axis=-1)  # shape: (num_curve_points, dims)
+        
+        # --- Step 6: Adjust Parameterization with Reference Angle (if provided) ---
+        if ref_angle is not None:
+            if verbose:
+                print("Adjusting parameterization using reference angle...")
+            # As an example, map u_fine from [0, 1] to [0, 2π], shift by ref_angle[3], and map back.
+            u_scaled = u_fine * 2 * np.pi
+            u_shifted = (u_scaled + ref_angle[3]) % (2 * np.pi)
+            u_fine = u_shifted / (2 * np.pi)
+            # Re-evaluate the spline with the adjusted parameters.
+            curve_eval = splev(u_fine, tck)
+            curve_points = np.stack(curve_eval, axis=-1)
+        
+        if verbose:
+            print("B-spline fitting complete.")
+            print("Spline knot vector (from tck):")
+            print(tck[0])
+        
+        # Return the evaluated curve, the tck (which includes knots, control points, and degree),
+        # the fine parameter values, and the refined initial knots.
+        return curve_points, tck, u_fine, final_knots
 
     @staticmethod
     def fit_spud_to_cebra(
@@ -373,7 +684,6 @@ class CEBRAUtils:
         # from real_data import cebra_analysis_oop  # if you separate modules; otherwise ignore
 
         fitter = mff.PiecewiseLinearFit(embeddings, fit_params)
-        print("high")
         unord_knots = fitter.get_new_initial_knots(method='kmedoids')
         init_knots = fitter.order_knots(unord_knots, method=fit_params['knot_order'])
 
@@ -387,20 +697,30 @@ class CEBRAUtils:
         final_knots = fitter.saved_knots[0]['knots']
         
         # Possibly remove an outlier knot if it is too far
-        segments = np.vstack((final_knots[1:] - final_knots[:-1], final_knots[0] - final_knots[-1]))
-        knot_dists = np.linalg.norm(segments, axis=1)
-        max_dist_idx = np.argmax(knot_dists)
-        max_dist = np.max(knot_dists)
-        nKnots = final_knots.shape[0]
-        if max_dist_idx < nKnots - 1:
-            idx1 = max_dist_idx
-            idx2 = max_dist_idx + 1
-        else:
-            idx1 = nKnots - 1
-            idx2 = 0
+        still_outlier_knots = True
+        knots_removed = 0
+        while still_outlier_knots:
+            segments = np.vstack((final_knots[1:] - final_knots[:-1], final_knots[0] - final_knots[-1]))
+            knot_dists = np.linalg.norm(segments, axis=1)
+            max_dist_idx = np.argmax(knot_dists)
+            max_dist = np.max(knot_dists)
+            nKnots = final_knots.shape[0]
+            if max_dist_idx < nKnots - 1:
+                idx1 = max_dist_idx
+                idx2 = max_dist_idx + 1
+            else:
+                idx1 = nKnots - 1
+                idx2 = 0
 
-        if max_dist > 1.5 * np.median(knot_dists):
-            final_knots = np.delete(final_knots, idx2, axis=0)
+            if max_dist > 1.5 * np.median(knot_dists) and knots_removed < 5:
+                knots_removed += 1
+                print("max_dist")
+                print(max_dist)
+                print(np.median(knot_dists))
+                final_knots = np.delete(final_knots, idx2, axis=0)
+            else:
+                still_outlier_knots = False
+            
 
         # Build final spline
         loop_final_knots = fhf.loop_knots(final_knots)
@@ -1403,10 +1723,10 @@ class CEBRAAnalysis:
             self.landmark_sessions = []
             self.optic_flow_sessions = [35]
         else:
-            self.landmark_num_trials = 0
-            self.landmark_control_point = 1
-            self.optic_flow_num_trials = 1
-            self.optic_flow_control_point = 32
+            self.landmark_num_trials = 30
+            self.landmark_control_point = 25
+            self.optic_flow_num_trials = 40
+            self.optic_flow_control_point = 1
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
@@ -1433,7 +1753,8 @@ class CEBRAAnalysis:
         self.save_anim = 1
         self.load_npy = 0
         self.rm_outliers = True
-        self.vel_threshold = 5  # degrees per second
+        self.vel_threshold = 0  # degrees per second
+        self.rm_low_vel = False
         self.bin_sizes = [1]
         self.max_num_reruns = max_num_reruns
 
@@ -1592,14 +1913,14 @@ class CEBRAAnalysis:
                         os.makedirs(session_base_path, exist_ok=True)
                     
                         SI_plots_path = os.path.join(session_base_path, 'SI_Plots',self.trial_type)
-                        anim_save_file = os.path.join(session_base_path, '3d_Animations',self.trial_type)
+                        anim_save_path = os.path.join(session_base_path, '3d_Animations',self.trial_type)
                         spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms',self.trial_type)
                         param_plot_path = os.path.join(session_base_path, 'Param_Plots',self.trial_type)
                         H_plot_path = os.path.join(session_base_path, 'H_Plots',self.trial_type)
                         pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots',self.trial_type)
 
 
-                        paths_to_create = [SI_plots_path, anim_save_file, spectrogram_path, param_plot_path, H_plot_path, pers_hom_path]
+                        paths_to_create = [SI_plots_path, anim_save_path, spectrogram_path, param_plot_path, H_plot_path, pers_hom_path]
                         for path in paths_to_create:
                             os.makedirs(path, exist_ok=True)
 
@@ -1733,8 +2054,9 @@ class CEBRAAnalysis:
 
                             spike_times_sec = (cluster.ts - start_time) / 1e6
                             vel_at_spikes = cluster.vel
-                            include_spikes = vel_at_spikes > self.vel_threshold
-                            spike_times_sec_high_vel = spike_times_sec[include_spikes]
+                            # include_spikes = vel_at_spikes > self.vel_threshold
+                            # spike_times_sec_high_vel = spike_times_sec[include_spikes]
+                            spike_times_sec_high_vel = spike_times_sec
                             if len(spike_times_sec_high_vel) == 0:
                                 continue
                             
@@ -1803,9 +2125,11 @@ class CEBRAAnalysis:
                         print("neural data shape")
                         print(neural_data_full_trial.shape[0])
 
-
+                        
                         neural_data_fit = neural_data_train_trial[high_vel_mask, :]
                         neural_data_low_vel = neural_data_full_trial[~high_vel_mask,:]
+                    
+
                         print(neural_data_low_vel.shape)
 
                         
@@ -1828,7 +2152,6 @@ class CEBRAAnalysis:
                                 print(neural_data_fit.shape)
                                 print(neural_data_full_trial.shape)
                                 if self.include_land_off and self.whole_trial_embeddings: # If you want to include the data points after the landmarks/optic flow turned off or not
-                                    print("in here")
                                     embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
                                         neural_data_fit=neural_data_fit,
                                         neural_data_embeddings=neural_data_fit,
@@ -1854,6 +2177,8 @@ class CEBRAAnalysis:
                                     )
 
                                 embeddings_3d = embeddings_high_dim.copy()
+
+                                
 
                                 full_embeddings = np.empty((neural_data_full_trial.shape[0],embeddings_3d.shape[1]))
                                 full_embeddings[:] = np.nan
@@ -2033,17 +2358,43 @@ class CEBRAAnalysis:
                                 num_used_clusters=num_used_cluster
                             )
 
-                            # Fit principal curve (SPUD)
+                            #Fit principal curve (SPUD)
                             fit_params = {
                                 'dalpha': 0.005,
                                 'knot_order': 'nearest',
                                 'penalty_type': 'curvature',
-                                'nKnots': 20,
-                                'curvature_coeff': 5,
+                                'nKnots': 15,
+                                'curvature_coeff': 100,
                                 'len_coeff': 2,
                                 'density_coeff': 2,
                                 'delta': 0.1
                             }
+
+                            # fit_params = {
+                            #     'num_knots': 8,
+                            #     'smoothing': 0.5,
+                            #     'degree': 3,
+                            #     'num_curve_points': 300,
+                            #     'knot_order': 'pca'
+                            # }
+
+                            # principal_curve_3d, tck, u_fine, final_knots = CEBRAUtils.fit_b_spline_to_embeddings(
+                            #     embeddings_3d,
+                            #     ref_angle=binned_true_angle_rad_unwrap,
+                            #     session_idx=1,
+                            #     results_save_path=".",
+                            #     fit_params=fit_params,
+                            #     dimension_3d=True,
+                            #     verbose=True
+                            # )
+
+                            # fig = plt.figure()
+                            # ax = fig.add_subplot(111, projection='3d')
+                            # ax.plot(embeddings[:, 0], embeddings[:, 1], embeddings[:, 2], 'o', color='gray', alpha=0.3, label='Embeddings')
+                            # ax.plot(curve_points[:, 0], curve_points[:, 1], curve_points[:, 2], 'r-', lw=2, label='B-spline Curve')
+                            # ax.legend()
+                            # plt.show()
+                                                    
 
                             principal_curve_3d, principal_curve_3d_pre, curve_params_3d = CEBRAUtils.fit_spud_to_cebra(
                                 embeddings=embeddings_3d,
@@ -2131,25 +2482,34 @@ class CEBRAAnalysis:
                             )
 
             
+                            CEBRAUtils.plot_embeddings_static(
+                                embeddings = embeddings_3d,
+                                embeddings_low_vel = embeddings_low_vel,
+                                principal_curve = principal_curve_3d,
+                                behav_var_name='Low Vel',  
+                                behav_var=binned_hipp_angle_rad,
+                                session_idx=session_idx,
+                                save_path=anim_save_path
+                            )
 
-                            # Static 3D plot of embeddings
-                            from mpl_toolkits.mplot3d import Axes3D
-                            fig_3d = plt.figure(figsize=(10, 8))
-                            ax3d = fig_3d.add_subplot(111, projection='3d')
-                            scatter = ax3d.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2],
-                                                c=binned_hipp_angle_rad, cmap='jet', s=5)
-                            if principal_curve_3d is not None:
-                                ax3d.plot(principal_curve_3d[:, 0], principal_curve_3d[:, 1], principal_curve_3d[:, 2],
-                                        color='red', linewidth=2)
-                            fig_3d.colorbar(scatter, label='Hipp Angle (rad)')
-                            ax3d.set_title(f"3D Embeddings (Session {session_idx})")
+
+                            CEBRAUtils.plot_embeddings_interactive(
+                                embeddings=embeddings_3d,
+                                embeddings_low_vel=embeddings_low_vel,
+                                principal_curve=principal_curve_3d,
+                                behav_var_name="Low Velocity Embeddings",
+                                behav_var=binned_hipp_angle_rad,
+                                session_idx=session_idx,
+                                html_filename="vanilla.html",
+                                save_path=anim_save_path
+                            )
+
+
+
 
                             # 3D plot
                             # plot_file_path = os.path.join(anim_save_file, f"3d_plot_session_{session_idx}.png")
 
-                            fig_3d.savefig(f"{anim_save_file}/3d_plot_session_{session_idx}.png", format='png', dpi=300, bbox_inches='tight')
-                            pdf.savefig(fig_3d)
-                            plt.close(fig_3d)
 
                             # Now compute decode_H
                             decode_H = derivative_decoded_angle / derivative_true_angle
@@ -2335,7 +2695,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'velocity_test_sesasd'
+    save_folder = 'neural_trace_test'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(

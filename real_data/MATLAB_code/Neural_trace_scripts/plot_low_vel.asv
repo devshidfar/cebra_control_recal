@@ -1,0 +1,74 @@
+close all;
+clc;
+
+% Set thresholds
+threshold_vel = 0.01; % Velocity threshold
+threshold_neural_data = 0.01; % Neural data threshold
+
+% Define output folder
+output_folder = 'low_binned_neural_data_overlap';
+if ~exist(output_folder, 'dir')
+    mkdir(output_folder); % Create folder if it doesn't exist
+end
+
+% Loop over sessions 1 to 30
+for session_num = 1:30
+    % Extract session data
+    session_idx = full_trial_1.sessions{session_num}.session_idx;
+    binned_vel = full_trial_1.sessions{session_num}.binned_vel;
+    neural_data = full_trial_1.sessions{session_num}.neural_data_full_trial;
+   
+
+    % Compute mean across neurons (dimension 2 since data is T x N)
+    neural_mean = mean(neural_data, 2); % Result is T x 1
+
+    % Mask velocity values above the threshold with NaN
+    binned_vel_filtered = binned_vel;
+    binned_vel_filtered(binned_vel >= threshold_vel) = NaN;
+
+    % Mask neural data above the threshold with NaN
+    neural_data_filtered = neural_mean;
+    neural_data_filtered(neural_mean >= thrclose aleshold_neural_data) = NaN;
+
+    % Create logical indices for low values
+    low_binned = binned_vel < threshold_vel;
+    low_neural_mean = neural_mean < threshold_neural_data;
+
+    if(full_trial_1.sessions{session_num}.rat == 913)
+        binned_vel_array = sum(low_binned)/length(binned_vel);
+    end
+   
+
+    % Find the overlap where both are below threshold
+    overlap = low_binned & low_neural_mean;
+
+    % Calculate the percentage of overlapping time points
+    percentage_overlap = (sum(overlap(:)) / sum(low_binned)) * 100;
+
+    % Print the percentage overlap for this session
+    fprintf('Session %d - Percentage overlap: %.2f%%\n', session_idx, percentage_overlap);
+
+    % Plot filtered velocity and neural data on the same figure
+    figure;
+    hold on; % Keep both plots on the same graph
+
+    % Plot filtered velocity in blue
+    plot(1:length(binned_vel_filtered), binned_vel_filtered, 'b-', 'LineWidth', 1.5);
+
+    % Plot filtered neural data in red
+    plot(1:length(neural_data_filtered), neural_data_filtered, 'r-', 'LineWidth', 1.5);
+
+    xlabel('Index');
+    ylabel('Value');
+    title(sprintf('Filtered Velocity and Neural Data for Session %d', session_idx));
+    legend('Binned Velocity', 'Mean Neural Activity');
+    grid on;
+    hold off;
+
+    % Save the figure to the output folder
+    save_filename = fullfile(output_folder, sprintf('session_%d.png', session_idx));
+    saveas(gcf, save_filename); % Save as PNG
+    close(gcf); % Close the figure to save memory
+end
+
+fprintf('All plots saved in "%s".\n', output_folder);
