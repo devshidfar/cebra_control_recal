@@ -4,7 +4,7 @@ close all;
 % dataset_structs.land_on = land_on;
 % dataset_structs.full_trial = full_trial; % Rename to avoid conflict with MATLAB's 'full'
 % dataset_structs.train_land_on = train_land_on;
-dataset_structs.full_trial_1 = full_trial_1
+dataset_structs.full_trial_1 = full_trial_1;
 
 % Define dataset names
 datasets = {'full_trial_1'}; 

@@ -40,5 +40,5 @@ function plotHs(decode_H, binned_est_gain, session_idx, dataset_name)
     close(fig);
 end
 
-
+close all;
 plotHs(full_trial_1.sessions{8}.lap_decode_H, full_trial_1.sessions{8}.lap_est_gain, full_trial_1.sessions{8}.session_idx, 'Full Trial');

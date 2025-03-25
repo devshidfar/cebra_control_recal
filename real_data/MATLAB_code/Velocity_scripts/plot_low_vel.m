@@ -1,6 +1,6 @@
 
 close all;
-struct = full_trial_1.sessions{1};
+struct = full_trial_1.sessions{12};
 
 array1 = struct.embeddings_3d;
 array2 = struct.embeddings_low_vel;

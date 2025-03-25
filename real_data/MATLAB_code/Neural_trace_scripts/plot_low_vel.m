@@ -12,7 +12,9 @@ if ~exist(output_folder, 'dir')
 end
 
 % Loop over sessions 1 to 30
-for session_num = 1:30
+binned_vel_array = zeros(2,0);
+H_error_array = []
+for session_num = 10:30
     % Extract session data
     session_idx = full_trial_1.sessions{session_num}.session_idx;
     binned_vel = full_trial_1.sessions{session_num}.binned_vel;
@@ -34,8 +36,12 @@ for session_num = 1:30
     low_binned = binned_vel < threshold_vel;
     low_neural_mean = neural_mean < threshold_neural_data;
 
-    if(full_trial_1.sessions{session_num}.rat == 913)
-        binned_vel_array = sum(low_binned)/length(binned_vel);
+    if (full_trial_1.sessions{session_num}.rat == 913)
+        newValue = sum(low_binned) / length(binned_vel);
+        % Append the new value to the array
+        newValue = double(newValue);
+        binned_vel_array = [binned_vel_array, [double(session_idx); newValue]];
+        H_error_array = [H_error_array, full_trial_1.sessions{session_num}.mean_H_difference];
     end
    
 

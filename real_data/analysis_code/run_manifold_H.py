@@ -99,7 +99,72 @@ class CEBRAUtils:
     """
 
     @staticmethod
-    def apply_cebra(neural_data_fit=None, neural_data_embeddings=None, neural_data_low_vel=None, output_dimension=3, temperature=1):
+    def load_optic_flow_data(path_optic_flow):
+
+            data_optic_flow = scipy.io.loadmat(
+                path_optic_flow, 
+                squeeze_me=True, 
+                struct_as_record=False
+            )
+            expt_optic_flow = data_optic_flow['expt']
+            print(f"Optic Flow expt shape: {expt_optic_flow.shape}")
+            return expt_optic_flow
+
+    @staticmethod
+    def load_landmark_data(path_landmark):
+        data_landmark = scipy.io.loadmat(
+            path_landmark, 
+            squeeze_me=True, 
+            struct_as_record=False
+        )
+        expt_landmark = data_landmark['expt']
+        print(f"Landmark expt shape: {expt_landmark.shape}")
+        return expt_landmark
+
+    # @staticmethod
+    # def load_unclustered_data(path_unclustered):
+    #     # Load the .mat file
+    #     mat_data = scipy.io.loadmat(path_unclustered, struct_as_record=False, squeeze_me=True)
+        
+    #     # Extract the 'allData' struct
+    #     allData = mat_data['allData']
+        
+    #     all_sessions = []
+
+    #     # Iterate over trials
+    #     for trial_key in dir(allData):
+    #         if trial_key.startswith('trial_'):  # Only process trials
+    #             trial_data = getattr(allData, trial_key)
+
+    #             trial_info = {
+    #                 "trial_name": trial_key,
+    #                 "tetrode_names": [],
+    #                 "ts": {},
+    #                 "ttnum": [],
+    #                 "vel": {}
+    #             }
+
+    #             # Extract tetrode names and spike times
+    #             for tetrode in trial_data:
+    #                 tetrode_name = tetrode.name  # Get tetrode name (e.g., 'TT1')
+    #                 spike_times = tetrode.ts  # Extract spike times
+    #                 tetrode_num = tetrode.ttnum
+    #                 unclustered_vel = tetrode.vel
+                    
+    #                 trial_info["tetrode_names"].append(tetrode_name)
+    #                 trial_info["ttnum"] = tetrode_num
+    #                 trial_info["vel"] = unclustered_vel
+    #                 trial_info["ts"][tetrode_name] = spike_times  # Store spike times
+                
+                
+    #             all_sessions.append(trial_info)
+
+    #     print(all_sessions)
+    #     return all_sessions
+    
+
+    @staticmethod
+    def apply_cebra(neural_data_fit=None, neural_data_embeddings=None, neural_data_low_vel=None, output_dimension=7, temperature=1):
         """
         Apply the CEBRA model to 'neural_data' and return the embeddings.
         """
@@ -111,7 +176,10 @@ class CEBRAUtils:
         )
         model.fit(neural_data_fit)
         embeddings = model.transform(neural_data_embeddings)
-        low_vel_embeddings = model.transform(neural_data_low_vel)
+        if(neural_data_low_vel.shape[0] >= 1):
+            low_vel_embeddings = model.transform(neural_data_low_vel)
+        else:
+            low_vel_embeddings = None
         return embeddings, low_vel_embeddings
     
     @staticmethod
@@ -1685,37 +1753,11 @@ class CEBRAAnalysis:
     using the utility methods from CEBRAUtils.
     """
 
-    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None,trial_type='default'):
+    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None,trial_type='default',data_source=""):
         """
         Loads data, sets up configuration, etc.
         """
         import scipy.io
-
-        self.sessions_data = []
-
-        # --- Load data ---
-        path_flow = os.path.join(
-            '/Users/devenshidfar/Desktop/Masters/NRSC_510B/',
-            'cebra_control_recal/mat_code_and_data/',
-            'data/NN_opticflow_dataset.mat'
-        )
-        data_flow = scipy.io.loadmat(
-            path_flow, 
-            squeeze_me=True, 
-            struct_as_record=False
-        )
-        self.expt_optic_flow = data_flow['expt']
-
-        path_landmark = os.path.join(
-            '/Users/devenshidfar/Desktop/Masters/NRSC_510B/',
-            'cebra_control_recal/mat_code_and_data/',
-            'data/expt_landmark.mat'
-        )
-        data_landmark = scipy.io.loadmat(path_landmark, squeeze_me=True, struct_as_record=False)
-        self.expt_landmark = data_landmark['expt']
-
-        print(f"Optic Flow expt shape: {self.expt_optic_flow.shape}")
-        print(f"Landmark expt shape: {self.expt_landmark.shape}")
 
         # --- Config parameters ---
         self.session_choose = session_choose
@@ -1723,10 +1765,10 @@ class CEBRAAnalysis:
             self.landmark_sessions = []
             self.optic_flow_sessions = [35]
         else:
-            self.landmark_num_trials = 30
+            self.landmark_num_trials = 0
             self.landmark_control_point = 25
-            self.optic_flow_num_trials = 40
-            self.optic_flow_control_point = 1
+            self.optic_flow_num_trials = 15
+            self.optic_flow_control_point = 35
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
@@ -1734,6 +1776,37 @@ class CEBRAAnalysis:
         self.whole_trial_embeddings = whole_trial_embeddings
         self.save_folder = save_folder
         self.trial_type = trial_type
+        self.data_source = data_source
+
+        self.sessions_data = []
+
+        # path_optic_flow = os.path.join(
+        #     '/Users/devenshidfar/Desktop/Masters/NRSC_510B/',
+        #     'cebra_control_recal/mat_code_and_data/',
+        #     'data/NN_opticflow_dataset.mat'
+        # )
+        path_optic_flow = os.path.join(
+            '/Users/devenshidfar/Desktop/unclustered_data.mat'
+        )
+        
+
+        path_landmark = os.path.join(
+            '/Users/devenshidfar/Desktop/Masters/NRSC_510B/',
+            'cebra_control_recal/mat_code_and_data/',
+            'data/expt_landmark.mat'
+        )
+
+        path_unclustered = os.path.join(
+            '/Users/devenshidfar/Desktop/unclustered.mat'
+        )
+
+        if callable(data_source):
+            # If the user passed in a function
+            self.expt = data_source()
+        self.expt_optic_flow = CEBRAUtils.load_optic_flow_data(path_optic_flow)
+        self.expt_landmark = CEBRAUtils.load_landmark_data(path_landmark)
+        # if data_source == "unclustered":
+        #     self.expt_unclustered = CEBRAUtils.load_unclustered_data(path_unclustered=path_unclustered)
 
         # List of experiment definitions
         self.expts = [
@@ -1753,7 +1826,7 @@ class CEBRAAnalysis:
         self.save_anim = 1
         self.load_npy = 0
         self.rm_outliers = True
-        self.vel_threshold = 0  # degrees per second
+        self.vel_threshold = 5  # degrees per second
         self.rm_low_vel = False
         self.bin_sizes = [1]
         self.max_num_reruns = max_num_reruns
@@ -1877,7 +1950,7 @@ class CEBRAAnalysis:
         from scipy.signal import savgol_filter
         from scipy.io import savemat
 
-
+        i__unclustered_trials = 0
         for expt_name, expt, control_point, num_trials in self.expts:
             control_count = 0
             print(f"Control point: {control_point} and num_trials: {num_trials}")
@@ -2018,7 +2091,7 @@ class CEBRAAnalysis:
                             ~np.isnan(binned_vel)
                         )
 
-                        # Instead of removing them, just set invalid bins to NaN:
+                        # Instead of removing them, I set invalid bins to NaN:
                         if not np.all(valid_bins):
                             binned_hipp_angle[~valid_bins] = np.nan
                             binned_true_angle[~valid_bins] = np.nan
@@ -2042,46 +2115,80 @@ class CEBRAAnalysis:
                         used_clusters = 0
                         used_cluster_iq_list = []
                         skipped_cluster_iq_list = []
+                        if(self.data_source == "processed"):
+                            for cluster in session.clust:
+                                if cluster.isolationQuality > 4:
+                                    skipped_clusters += 1
+                                    skipped_cluster_iq_list.append(cluster.isolationQuality)
+                                    continue
+                                else:
+                                    used_clusters += 1
+                                    used_cluster_iq_list.append(cluster.isolationQuality)
 
-                        for cluster in session.clust:
-                            if cluster.isolationQuality > 4:
-                                skipped_clusters += 1
-                                skipped_cluster_iq_list.append(cluster.isolationQuality)
-                                continue
-                            else:
-                                used_clusters += 1
-                                used_cluster_iq_list.append(cluster.isolationQuality)
+                                spike_times_sec = (cluster.ts - start_time) / 1e6
+                                vel_at_spikes = cluster.vel
+                                # include_spikes = vel_at_spikes > self.vel_threshold
+                                # spike_times_sec_high_vel = spike_times_sec[include_spikes]
+                                spike_times_sec_high_vel = spike_times_sec
+                                if len(spike_times_sec_high_vel) == 0:
+                                    continue
+                                
+                                try:
+                                    binned_spikes_full, _, _ = stats.binned_statistic(
+                                        spike_times_sec,
+                                        np.ones_like(spike_times_sec),
+                                        statistic='sum',
+                                        bins=bins
+                                    )
+                                    all_spikes_full.append(binned_spikes_full)
 
-                            spike_times_sec = (cluster.ts - start_time) / 1e6
-                            vel_at_spikes = cluster.vel
-                            # include_spikes = vel_at_spikes > self.vel_threshold
-                            # spike_times_sec_high_vel = spike_times_sec[include_spikes]
-                            spike_times_sec_high_vel = spike_times_sec
-                            if len(spike_times_sec_high_vel) == 0:
-                                continue
-                            
-                            try:
-                                binned_spikes_full, _, _ = stats.binned_statistic(
-                                    spike_times_sec,
-                                    np.ones_like(spike_times_sec),
-                                    statistic='sum',
-                                    bins=bins
-                                )
-                                all_spikes_full.append(binned_spikes_full)
+                                    binned_spikes_train, _, _ = stats.binned_statistic(
+                                        spike_times_sec_high_vel,
+                                        np.ones_like(spike_times_sec_high_vel),
+                                        statistic='sum',
+                                        bins=bins
+                                    )
+                                    all_spikes_train.append(binned_spikes_train)
 
-                                binned_spikes_train, _, _ = stats.binned_statistic(
-                                    spike_times_sec_high_vel,
-                                    np.ones_like(spike_times_sec_high_vel),
-                                    statistic='sum',
-                                    bins=bins
-                                )
-                                all_spikes_train.append(binned_spikes_train)
+                                except ValueError as e:
+                                    # Catch "Bin edges must be unique"
+                                    print(f"[WARNING] Binning failed for session {session_idx}. Exception: {e}")
+                                    # Skip this session and continue with the next
+                                    continue
 
-                            except ValueError as e:
-                                # Catch "Bin edges must be unique"
-                                print(f"[WARNING] Binning failed for session {session_idx}. Exception: {e}")
-                                # Skip this session and continue with the next
-                                continue
+                        elif (self.data_source == "unclustered"):
+                            all_ttnums = set()
+                            for cluster in session.clust:
+                                all_ttnums.add(cluster.ttnum)
+                            for tetrode_data in session.unclustered:
+                                if tetrode_data.ttnum in all_ttnums:
+                                    spike_times_sec = (tetrode_data.ts - start_time) / 1e6
+
+                                    plt.hist(tetrode_data.ts/1e6, bins=30, edgecolor='black')
+                                    vel_at_spikes = tetrode_data.vel
+
+                                    # Possibly filter based on velocity threshold
+                                    # e.g., if you want to keep only high-velocity spikes:
+                                    # include_spikes = vel_at_spikes > self.vel_threshold
+                                    # spike_times_sec_high_vel = spike_times_sec[include_spikes]
+                                    spike_times_sec_high_vel = spike_times_sec
+                                    # Binning code
+                                    binned_spikes_full, _, _ = stats.binned_statistic(
+                                        spike_times_sec,
+                                        np.ones_like(spike_times_sec),
+                                        statistic='sum',
+                                        bins=bins
+                                    )
+                                    all_spikes_full.append(binned_spikes_full)
+
+                                    binned_spikes_train, _, _ = stats.binned_statistic(
+                                        spike_times_sec_high_vel,
+                                        np.ones_like(spike_times_sec_high_vel),
+                                        statistic='sum',
+                                        bins=bins
+                                    )
+                                    all_spikes_train.append(binned_spikes_train)
+
                         
         
                         # Stats for cluster
@@ -2178,7 +2285,8 @@ class CEBRAAnalysis:
 
                                 embeddings_3d = embeddings_high_dim.copy()
 
-                                
+                                print(embeddings_3d)
+                                print(neural_data_full_trial)
 
                                 full_embeddings = np.empty((neural_data_full_trial.shape[0],embeddings_3d.shape[1]))
                                 full_embeddings[:] = np.nan
@@ -2186,6 +2294,22 @@ class CEBRAAnalysis:
                                 embeddings_3d = full_embeddings
 
                                 embeddings_3d = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d)
+
+                                fig = plt.figure(figsize=(8, 6))
+                                ax = fig.add_subplot(111, projection='3d')
+                                
+                                ax.scatter(embeddings_3d[:, 0], embeddings_3d[:, 1], embeddings_3d[:, 2], s=5, alpha=0.7)
+                                
+                                ax.set_xlabel("X")
+                                ax.set_ylabel("Y")
+                                ax.set_zlabel("Z")
+                                ax.set_title("test")
+                                
+                                plt.show()
+
+                                # print(neural_data_full_trial[:,0])
+
+                                # plt.plot(neural_data_full_trial[:, 0])
 
 
                                 print("shape of embeddings after fitting")
@@ -2253,11 +2377,11 @@ class CEBRAAnalysis:
                                     skip_session = True
                                     break
 
-                                embeddings_3d_mean = np.mean(embeddings_3d, axis=0)
-                                embeddings_low_vel_mean = np.mean(embeddings_low_vel,axis=0)
+                                # embeddings_3d_mean = np.mean(embeddings_3d, axis=0)
+                                #embeddings_low_vel_mean = np.mean(embeddings_low_vel,axis=0)
 
-                                embeddings_low_vel = embeddings_low_vel - embeddings_low_vel_mean
-                                embeddings_3d = embeddings_3d - embeddings_3d_mean
+                                embeddings_low_vel = embeddings_low_vel 
+                                embeddings_3d = embeddings_3d 
 
                                 # Run persistent homology
 
@@ -2482,27 +2606,27 @@ class CEBRAAnalysis:
                             )
 
             
-                            CEBRAUtils.plot_embeddings_static(
-                                embeddings = embeddings_3d,
-                                embeddings_low_vel = embeddings_low_vel,
-                                principal_curve = principal_curve_3d,
-                                behav_var_name='Low Vel',  
-                                behav_var=binned_hipp_angle_rad,
-                                session_idx=session_idx,
-                                save_path=anim_save_path
-                            )
+                            # CEBRAUtils.plot_embeddings_static(
+                            #     embeddings = embeddings_3d,
+                            #     embeddings_low_vel = embeddings_low_vel,
+                            #     principal_curve = principal_curve_3d,
+                            #     behav_var_name='Low Vel',  
+                            #     behav_var=binned_hipp_angle_rad,
+                            #     session_idx=session_idx,
+                            #     save_path=anim_save_path
+                            # )
 
 
-                            CEBRAUtils.plot_embeddings_interactive(
-                                embeddings=embeddings_3d,
-                                embeddings_low_vel=embeddings_low_vel,
-                                principal_curve=principal_curve_3d,
-                                behav_var_name="Low Velocity Embeddings",
-                                behav_var=binned_hipp_angle_rad,
-                                session_idx=session_idx,
-                                html_filename="vanilla.html",
-                                save_path=anim_save_path
-                            )
+                            # CEBRAUtils.plot_embeddings_interactive(
+                            #     embeddings=embeddings_3d,
+                            #     embeddings_low_vel=embeddings_low_vel,
+                            #     principal_curve=principal_curve_3d,
+                            #     behav_var_name="Low Velocity Embeddings",
+                            #     behav_var=binned_hipp_angle_rad,
+                            #     session_idx=session_idx,
+                            #     html_filename="vanilla.html",
+                            #     save_path=anim_save_path
+                            # )
 
 
 
@@ -2695,7 +2819,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'neural_trace_test'
+    save_folder = 'unclustered_all_913'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(
@@ -2754,10 +2878,23 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_1'
+        trial_type='full_trial_1',
+        data_source='unclustered'
+    )
+    analysis_full_trial_2 = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_2',
+        data_source='processed'
     )
     analysis_full_trial_1.run_analysis()
     dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
+    analysis_full_trial_2.run_analysis()
+    dict_analysis_full_trial_2 = analysis_full_trial_1.get_results_dict()
     # analysis_full_trial_2 = CEBRAAnalysis(
     #     session_choose=False,
     #     max_num_reruns=1,
@@ -2794,7 +2931,7 @@ def main():
 
     combined_results = {
         'full_trial_1': dict_analysis_full_trial_1,
-        # 'full_trial_2': dict_analysis_full_trial_2,
+        'full_trial_2': dict_analysis_full_trial_2,
         # 'full_trial_3': dict_analysis_full_trial_3,
         # 'full_trial_4': dict_analysis_full_trial_4
     }
