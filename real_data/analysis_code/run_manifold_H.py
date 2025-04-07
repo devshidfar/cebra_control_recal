@@ -2157,7 +2157,7 @@ class CEBRAAnalysis:
                                     continue
 
                         elif (self.data_source == "unclustered"):
-                            use_all_tetrodes = False # Flag to decide whether or not to use all tetrodes or just ones in final processing
+                            use_all_tetrodes = True # Flag to decide whether or not to use all tetrodes or just ones in final processing
                             all_ttnums = set()
                             for cluster in session.clust: # Go through clusters in used clusters
                                 all_ttnums.add(cluster.ttnum) # And add the ones that made it to final processing
@@ -2607,27 +2607,27 @@ class CEBRAAnalysis:
                             )
 
             
-                            # CEBRAUtils.plot_embeddings_static(
-                            #     embeddings = embeddings_3d,
-                            #     embeddings_low_vel = embeddings_low_vel,
-                            #     principal_curve = principal_curve_3d,
-                            #     behav_var_name='Low Vel',  
-                            #     behav_var=binned_hipp_angle_rad,
-                            #     session_idx=session_idx,
-                            #     save_path=anim_save_path
-                            # )
+                            CEBRAUtils.plot_embeddings_static(
+                                embeddings = embeddings_3d,
+                                embeddings_low_vel = embeddings_low_vel,
+                                principal_curve = principal_curve_3d,
+                                behav_var_name='Low Vel',  
+                                behav_var=binned_hipp_angle_rad,
+                                session_idx=session_idx,
+                                save_path=anim_save_path
+                            )
 
 
-                            # CEBRAUtils.plot_embeddings_interactive(
-                            #     embeddings=embeddings_3d,
-                            #     embeddings_low_vel=embeddings_low_vel,
-                            #     principal_curve=principal_curve_3d,
-                            #     behav_var_name="Low Velocity Embeddings",
-                            #     behav_var=binned_hipp_angle_rad,
-                            #     session_idx=session_idx,
-                            #     html_filename="vanilla.html",
-                            #     save_path=anim_save_path
-                            # )
+                            CEBRAUtils.plot_embeddings_interactive(
+                                embeddings=embeddings_3d,
+                                embeddings_low_vel=embeddings_low_vel,
+                                principal_curve=principal_curve_3d,
+                                behav_var_name="Low Velocity Embeddings",
+                                behav_var=binned_hipp_angle_rad,
+                                session_idx=session_idx,
+                                html_filename="embeddings_3d.html",
+                                save_path=anim_save_path
+                            )
 
 
 
@@ -2879,7 +2879,7 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_1',
+        trial_type='unclustered',
         data_source='unclustered'
     )
     analysis_full_trial_2 = CEBRAAnalysis(
@@ -2889,13 +2889,13 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_2',
+        trial_type='clustered',
         data_source='processed'
     )
     analysis_full_trial_1.run_analysis()
     dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
     analysis_full_trial_2.run_analysis()
-    dict_analysis_full_trial_2 = analysis_full_trial_1.get_results_dict()
+    dict_analysis_full_trial_2 = analysis_full_trial_2.get_results_dict()
     # analysis_full_trial_2 = CEBRAAnalysis(
     #     session_choose=False,
     #     max_num_reruns=1,
