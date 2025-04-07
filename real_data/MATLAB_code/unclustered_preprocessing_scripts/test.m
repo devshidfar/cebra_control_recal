@@ -13,18 +13,18 @@ for iFile = 1:nFiles
     fname = fileList(iFile).name;
     
     % Extract day and rat from filename: m1_tt_{day}_{rat}.mat
-    tokens = regexp(fname, '^m1_tt_(\d+)_(.+)\.mat$', 'tokens');
+    tokens = regexp(fname, '^m1_tt_(\d+)_(\d+)\.mat$', 'tokens');
     if isempty(tokens)
         warning('File %s does not match pattern m1_tt_{day}_{rat}.mat', fname);
         continue;
     end
     tokens = tokens{1};   % e.g. {'14','913'}
-    file_day_str = tokens{1}; 
-    file_rat_str = tokens{2}; 
+    file_rat_str = tokens{1}; 
+    file_day_str = tokens{2}; 
     
     % Convert these to numeric (assuming day and rat are numeric in expt).
-    file_day_num = str2double(file_day_str);
     file_rat_num = str2double(file_rat_str);
+    file_day_num = str2double(file_day_str);
 
     fprintf('Checking file: %s | Extracted day: %d | Extracted rat: %d\n', ...
         fname, file_day_num, file_rat_num);
@@ -63,6 +63,7 @@ for iFile = 1:nFiles
     filteredUnclustered = struct([]);
 
     for k = 1:numel(unclusteredData)
+        % disp(k)
         for f = 1:numel(fieldsToKeep)
             if isfield(unclusteredData(k), fieldsToKeep{f})
                 filteredUnclustered(k).(fieldsToKeep{f}) = ...

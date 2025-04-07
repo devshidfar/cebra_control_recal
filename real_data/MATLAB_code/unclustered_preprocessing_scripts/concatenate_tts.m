@@ -7,7 +7,7 @@ file_prefix = 'm1_tt_';
 file_ext = '.mat';
 
 % Define the range of files to load
-file_nums = 35:37;  % Adjust this if you have more files (e.g., 1:10)
+file_nums = 1:19;  % Adjust this
 
 % Initialize an empty struct to hold all loaded structs
 allData = struct();

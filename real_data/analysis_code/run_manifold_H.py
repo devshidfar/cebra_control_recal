@@ -1786,7 +1786,7 @@ class CEBRAAnalysis:
         #     'data/NN_opticflow_dataset.mat'
         # )
         path_optic_flow = os.path.join(
-            '/Users/devenshidfar/Desktop/unclustered_data.mat'
+            '/Users/devenshidfar/Desktop/unclustered_processed/unclustered_all_913.mat'
         )
         
 
@@ -2157,11 +2157,12 @@ class CEBRAAnalysis:
                                     continue
 
                         elif (self.data_source == "unclustered"):
+                            use_all_tetrodes = False # Flag to decide whether or not to use all tetrodes or just ones in final processing
                             all_ttnums = set()
-                            for cluster in session.clust:
-                                all_ttnums.add(cluster.ttnum)
-                            for tetrode_data in session.unclustered:
-                                if tetrode_data.ttnum in all_ttnums:
+                            for cluster in session.clust: # Go through clusters in used clusters
+                                all_ttnums.add(cluster.ttnum) # And add the ones that made it to final processing
+                            for tetrode_data in session.unclustered: # Now go through tetrode data
+                                if use_all_tetrodes or tetrode_data.ttnum in all_ttnums: # Check if that tetrode is in final processing
                                     spike_times_sec = (tetrode_data.ts - start_time) / 1e6
 
                                     plt.hist(tetrode_data.ts/1e6, bins=30, edgecolor='black')
