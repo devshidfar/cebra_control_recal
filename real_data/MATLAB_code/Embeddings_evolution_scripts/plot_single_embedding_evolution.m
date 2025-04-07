@@ -1,11 +1,11 @@
 close all;
 % Extract embeddings
-idxs = find(SI_score_hipp > 0.75)
-% session_idxs = session_idx(idxs)
+idxs = find(full_trial_1(1).sessions{1}.SI_score_hipp > 0.75)
+session_idxs = session_idx(idxs)
 for i = 1:length(idxs)
     idx = idxs(i)
-    session_idx = session_idxs(i)
-    embeddings = embeddings_3d{idx}
+    session_idx = session_idxs(i);
+    embeddings = embeddings_3d{idx};
     hipp_angle = binned_hipp_angle{idx};
     high_vel = binned_high_vel{idx};
     %binned_high_vel_rad = binned_high_vel * (2*pi/180);

@@ -1,7 +1,7 @@
 function processAllSessions(full_trial_1, full_trial_2)
     % Process all sessions in land_off and no_land_off datasets
-    processDataset(full_trial_1.sessions, 'full_trial_1');
-    processDataset(full_trial_2.sessions, 'full_trial_2');
+    processDataset(full_trial_2.sessions, 'full_trial_1');
+    processDataset(full_trial_1.sessions, 'full_trial_2');
     disp('All session animations complete.');
 end
 
@@ -23,9 +23,12 @@ function processSession(sessionData, session_idx, datasetType)
     
     % Extract embeddings and velocity data
     embeddings_3d = squeeze(sessionData.embeddings_3d);
-    binned_hipp_angle = sessionData.binned_high_vel;
-    binned_high_vel = sessionData.binned_high_vel;
-    binned_high_vel_rad = binned_high_vel * (2*pi/180);
+    binned_hipp_angle = sessionData.binned_hipp_angle;
+    % binned_hipp_angle = binned_hipp_angle * (pi/180);
+    binned_hipp_angle = mod(binned_hipp_angle, 2*pi);
+    assignin('base','binned_hipp_angle',binned_hipp_angle);
+    binned_vel = sessionData.binned_vel;
+    binned_vel_rad = binned_vel * (2*pi/180);
     
     x = embeddings_3d(:, 1);
     y = embeddings_3d(:, 2);
@@ -33,7 +36,7 @@ function processSession(sessionData, session_idx, datasetType)
     nPoints = length(x);
 
     % Process binned hippocampal angle for colormap
-    binned_hipp_angle = mod(binned_hipp_angle, 2*pi); % Wrap around at 2π
+    % binned_hipp_angle = mod(binned_hipp_angle, 2*pi); % Wrap around at 2π
     C = binned_hipp_angle; % Use as color data
 
     % Create figure
@@ -67,7 +70,7 @@ function processSession(sessionData, session_idx, datasetType)
     textPositionY = max(y) + 0.75;
     textPositionZ = max(z);
     valueText = text(textPositionX, textPositionY, textPositionZ, ...
-        sprintf('Rat Velocity (rad/s): %.2f', binned_high_vel_rad(1)), ...
+        sprintf('Rat Velocity (rad/s): %.2f', binned_vel_rad(1)), ...
         'FontSize', 14, 'FontWeight', 'bold', 'Color', 'k');
 
     % Set correct frame rate for VideoWriter
@@ -84,7 +87,7 @@ function processSession(sessionData, session_idx, datasetType)
         end
         
         scatter3(x(i), y(i), z(i), 50, C(i), 'filled');
-        valueText.String = sprintf('Rat Velocity (rad/s): %.2f', binned_high_vel_rad(i));
+        valueText.String = sprintf('Rat Velocity (rad/s): %.2f', binned_vel_rad(i));
 
         drawnow;
 
