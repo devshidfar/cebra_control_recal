@@ -106,46 +106,6 @@ class CEBRAUtils:
         print(f"Landmark expt shape: {expt_landmark.shape}")
         return expt_landmark
 
-    # @staticmethod
-    # def load_unclustered_data(path_unclustered):
-    #     # Load the .mat file
-    #     mat_data = scipy.io.loadmat(path_unclustered, struct_as_record=False, squeeze_me=True)
-        
-    #     # Extract the 'allData' struct
-    #     allData = mat_data['allData']
-        
-    #     all_sessions = []
-
-    #     # Iterate over trials
-    #     for trial_key in dir(allData):
-    #         if trial_key.startswith('trial_'):  # Only process trials
-    #             trial_data = getattr(allData, trial_key)
-
-    #             trial_info = {
-    #                 "trial_name": trial_key,
-    #                 "tetrode_names": [],
-    #                 "ts": {},
-    #                 "ttnum": [],
-    #                 "vel": {}
-    #             }
-
-    #             # Extract tetrode names and spike times
-    #             for tetrode in trial_data:
-    #                 tetrode_name = tetrode.name  # Get tetrode name (e.g., 'TT1')
-    #                 spike_times = tetrode.ts  # Extract spike times
-    #                 tetrode_num = tetrode.ttnum
-    #                 unclustered_vel = tetrode.vel
-                    
-    #                 trial_info["tetrode_names"].append(tetrode_name)
-    #                 trial_info["ttnum"] = tetrode_num
-    #                 trial_info["vel"] = unclustered_vel
-    #                 trial_info["ts"][tetrode_name] = spike_times  # Store spike times
-                
-                
-    #             all_sessions.append(trial_info)
-
-    #     print(all_sessions)
-    #     return all_sessions
     
 
     @staticmethod
@@ -1734,8 +1694,8 @@ class CEBRAAnalysis:
         else:
             self.landmark_num_trials = 0
             self.landmark_control_point = 25
-            self.optic_flow_num_trials = 4
-            self.optic_flow_control_point = 35
+            self.optic_flow_num_trials = 1
+            self.optic_flow_control_point = 37
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
@@ -2054,7 +2014,7 @@ class CEBRAAnalysis:
                         used_clusters = 0
                         used_cluster_iq_list = []
                         skipped_cluster_iq_list = []
-                        if(self.data_source == "processed"):
+                        if(self.data_source == "clustered"):
                             for cluster in session.clust:
                                 if cluster.isolationQuality > 4:
                                     skipped_clusters += 1
@@ -2124,8 +2084,10 @@ class CEBRAAnalysis:
                                         bins=bins
                                     )
                                     all_spikes_train.append(binned_spikes_train)
-
                         
+                        else:
+                            raise Exception("Incorrect data source")
+
         
                         # Stats for cluster
                         used_cluster_iq = np.asarray(used_cluster_iq_list)
@@ -2669,7 +2631,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'embedding_evolution'
+    save_folder = 'unclust_clust'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(
@@ -2744,13 +2706,48 @@ def main():
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='clustered',
-        data_source='processed',
+        trial_type='full_trial_2',
+        data_source='clustered',
         temperature_list=[1]
     )
 
     analysis_full_trial_2.run_analysis()
     dict_analysis_full_trial_2 = analysis_full_trial_2.get_results_dict()
+
+
+
+    analysis_full_trial_1 = CEBRAAnalysis(
+        session_choose=False,
+        max_num_reruns=1,
+        run_persistent_homology=False,
+        include_land_off=True,
+        whole_trial_embeddings=True,
+        save_folder=save_folder,
+        trial_type='full_trial_1',
+        data_source='unclustered',
+        temperature_list=[1]
+    )
+
+    analysis_full_trial_1.run_analysis()
+    dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
+
+
+
+
+    # analysis_full_trial_3 = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=True,
+    #     whole_trial_embeddings=True,
+    #     save_folder=save_folder,
+    #     trial_type='unclustered_3',
+    #     data_source='unclustered',
+    #     temperature_list=[1]
+    # )
+
+    # analysis_full_trial_3.run_analysis()
+    # dict_analysis_full_trial_3 = analysis_full_trial_3.get_results_dict()
     
     # analysis_full_trial_2 = CEBRAAnalysis(
     #     session_choose=False,
@@ -2787,9 +2784,8 @@ def main():
     # dict_analysis_full_trial_4 = analysis_full_trial_4.get_results_dict()
 
     combined_results = {
-        # 'full_trial_1': dict_analysis_full_trial_1,
-        'full_trial_2': dict_analysis_full_trial_2
-        # 'full_trial_3': dict_analysis_full_trial_3,
+        'full_trial_1': dict_analysis_full_trial_1,
+        'full_trial_2': dict_analysis_full_trial_2,
         # 'full_trial_4': dict_analysis_full_trial_4
     }
     

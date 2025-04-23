@@ -12,7 +12,7 @@ from matplotlib.cm import ScalarMappable
 import matplotlib.colors as mcolors
 import cebra
 import matplotlib
-matplotlib.use("Agg")
+# matplotlib.use("Agg")
 import plotly.graph_objs as go
 from plotly.offline import plot
 from matplotlib.widgets import Slider
@@ -26,6 +26,20 @@ from sklearn.decomposition import PCA
 from scipy.interpolate import splprep, splev
 import plotly.graph_objects as go
 import plotly.io as pio
+
+sys.path.append("/Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/DFINE")
+
+
+
+from trainers.TrainerDFINE import TrainerDFINE
+import DFINE
+
+from config_dfine import get_default_config
+from datasets import DFINEDataset
+from torch.utils.data import DataLoader
+from time_series_utils import z_score_tensor
+import torch
+
 
 # CLASS: CEBRAUtils
 
@@ -146,6 +160,105 @@ class CEBRAUtils:
 
     #     print(all_sessions)
     #     return all_sessions
+
+    def to_array(x):
+        """
+        Recursively drill into DFINE’s nested dicts and return the first
+        torch.Tensor / np.ndarray we encounter.
+        """
+        if isinstance(x, (torch.Tensor,)):
+            return x.detach().cpu()
+        if hasattr(x, "numpy"):                 # np.ndarray
+            return x
+        if isinstance(x, dict):
+            for v in x.values():
+                out = CEBRAUtils.to_array(v)
+                if out is not None:
+                    return out
+        return None
+
+
+    def apply_dfine(
+        neural_data_fit,
+        neural_data_embeddings=None,            # kept only for signature compatibility
+        neural_data_low_vel=None,
+        output_dimension=3,
+        temperature=1.0,
+        num_train_epochs=200,
+        plot=True,
+    ):
+        """
+        Train DFINE on `neural_data_fit` and return two embeddings:
+        * emb_high  – high‑velocity (training) segment             (N_high, 3)
+        * emb_low   – low‑velocity segment (or None if not given)  (N_low , 3)
+        """
+        # 0) ----------------------------------------------------------------
+        cfg = get_default_config()
+        cfg.model.dim_y = neural_data_fit.shape[1]          # #neurons
+        cfg.model.dim_a = output_dimension                  # latent dim
+        cfg.train.temperature = temperature
+        cfg.train.num_epochs = num_train_epochs
+
+        # 1)  shape  (num_bins, 1, dim_y)
+        y_fit = torch.from_numpy(neural_data_fit).float().unsqueeze(1)
+        y_low = (None if neural_data_low_vel is None
+                else torch.from_numpy(neural_data_low_vel).float().unsqueeze(1))
+
+        # 2)  z‑score (fit mean/std on high‑vel data only)
+        y_fit_z, mu, sigma = z_score_tensor(y_fit, fit=True)
+        y_low_z = None
+        if y_low is not None:
+            y_low_z, _, _ = z_score_tensor(y_low, mean=mu, std=sigma, fit=False)
+
+        # 3)  DataLoader
+        loader_high = DataLoader(
+            DFINEDataset(y=y_fit_z),
+            batch_size=cfg.train.batch_size,
+            shuffle=True,
+        )
+
+        # 4)  train (use the same loader as “validation” to keep Trainer happy)
+        trainer = TrainerDFINE(cfg)
+        trainer.train(train_loader=loader_high, valid_loader=loader_high)
+
+        # 5)  inference helper ------------------------------------------------
+        def _encode(loader):
+            res = trainer.save_encoding_results(
+                train_loader=loader,
+                valid_loader=loader,
+                save_results=False,
+            )
+            a_hat = CEBRAUtils.to_array(res["full_inference"]["a_hat"])   # e.g. (1, N, 3)
+            if a_hat.ndim == 3:                                 # collapse leading dim
+                a_hat = a_hat.reshape(-1, a_hat.shape[-1])      # -> (N, 3)
+            return a_hat.numpy()
+
+        # 6)  high‑ and (maybe) low‑velocity embeddings ----------------------
+        emb_high = _encode(loader_high)
+
+        emb_low = None
+        if y_low_z is not None:
+            loader_low = DataLoader(
+                DFINEDataset(y=y_low_z),
+                batch_size=cfg.train.batch_size,
+                shuffle=False,
+            )
+            emb_low = _encode(loader_low)
+
+        # 7)  quick sanity‑check plot ----------------------------------------
+        if plot and emb_high.shape[1] == 3:
+            fig = plt.figure(figsize=(7, 5))
+            ax = fig.add_subplot(111, projection="3d")
+            ax.scatter(emb_high[:, 0], emb_high[:, 1], emb_high[:, 2], s=2)
+            ax.set_xlabel("a₁")
+            ax.set_ylabel("a₂")
+            ax.set_zlabel("a₃")
+            ax.set_title("DFINE 3‑D latent trajectory (high‑velocity)")
+            plt.tight_layout()
+            plt.show()
+
+        return emb_high, emb_low
+
     
 
     @staticmethod
@@ -2205,6 +2318,15 @@ class CEBRAAnalysis:
                                             output_dimension=output_dimension,
                                             temperature=temp
                                     )
+                                
+                                embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_dfine(
+                                    neural_data_fit=neural_data_fit,
+                                    neural_data_embeddings=None, 
+                                    neural_data_low_vel=neural_data_low_vel,
+                                    output_dimension=3,
+                                    temperature=temp,
+                                    num_train_epochs=10
+                                )
 
                                 embeddings_3d = embeddings_high_dim.copy()
 
@@ -2669,7 +2791,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'embedding_evolution'
+    save_folder = 'DFINE'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(
