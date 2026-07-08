@@ -2056,7 +2056,7 @@ class CEBRAAnalysis:
                                     continue
 
                         elif (self.data_source == "unclustered"):
-                            use_all_tetrodes = True # Flag to decide whether or not to use all tetrodes or just ones in final processing
+                            use_all_tetrodes = False # Flag to decide whether or not to use all tetrodes or just ones in final processing
                             all_ttnums = set()
                             for cluster in session.clust: # Go through clusters in used clusters
                                 all_ttnums.add(cluster.ttnum) # And add the ones that made it to final processing
@@ -2631,7 +2631,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'unclust_clust'
+    save_folder = 'thesis_results'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(
@@ -2716,20 +2716,20 @@ def main():
 
 
 
-    analysis_full_trial_1 = CEBRAAnalysis(
-        session_choose=False,
-        max_num_reruns=1,
-        run_persistent_homology=False,
-        include_land_off=True,
-        whole_trial_embeddings=True,
-        save_folder=save_folder,
-        trial_type='full_trial_1',
-        data_source='unclustered',
-        temperature_list=[1]
-    )
+    # analysis_full_trial_1 = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=False,
+    #     include_land_off=True,
+    #     whole_trial_embeddings=True,
+    #     save_folder=save_folder,
+    #     trial_type='full_trial_1',
+    #     data_source='unclustered',
+    #     temperature_list=[1]
+    # )
 
-    analysis_full_trial_1.run_analysis()
-    dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
+    # analysis_full_trial_1.run_analysis()
+    # dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
 
 
 

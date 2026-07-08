@@ -127,5 +127,5 @@ end
 % -------------------------------------------------------------------------
 % Example usage:
 allowed   = [36];
-keepTrail = true;
+keepTrail = false;
 processAllSessions(full_trial_2, full_trial_2, allowed, keepTrail);
