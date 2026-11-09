@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     save_dir = "wasserstein_plots"
     os.makedirs(save_dir, exist_ok=True)
-    num_trials = 15 # Number of sessions/trials to compare
+    num_trials = 15  # Number of sessions/trials to compare (within-mode only)
 
     if mode == "within":
         # Within-session comparison: For each trial in a given session, compare rotated clouds from different sources.
@@ -158,68 +158,88 @@ if __name__ == "__main__":
             print(f"Saved pairwise distance matrix for trial {k} to {mat_save_path}")
     
     elif mode == "across":
-        # Across-session comparison: Compare one trial (e.g., trial 0) across sessions.
-        start_point = 10
-        target_cloud = embeddings_list[start_point]  # Take the {start_point} trial from session  as the target
-        source_clouds = [embeddings_list[i] for i in range(start_point, start_point+num_trials)]
+        # Across-session comparison: align every session to a common reference.
+        start_point = 0
+        num_sessions = len(embeddings_list)
+        session_indices = list(range(start_point, num_sessions))
+        target_cloud = embeddings_list[start_point]
+        source_clouds = [embeddings_list[i] for i in session_indices]
+        session_labels = [sessions[i].session_idx for i in session_indices]
+        rat_labels = [sessions[i].rat for i in session_indices]
 
+        print(f"Processing {num_sessions} sessions (indices {session_indices[0]}–{session_indices[-1]})")
+        print(f"Target session idx: {session_labels[0]} (rat {rat_labels[0]})")
         print(target_cloud.shape)
         print(source_clouds[0].shape)
-    
-        N = source_clouds[0].shape[0]
-        best_rotation = np.zeros((num_trials, 3, 3))
+
+        best_rotation = np.zeros((num_sessions, 3, 3))
         best_rotated_cloud = []
-        min_distance = np.zeros(num_trials)
-    
-        for i in range(num_trials):
-            best_rotation[i], best_rotated_cloud_temp, min_distance[i] = find_best_rotation(source_clouds[i], target_cloud)
+        min_distance = np.zeros(num_sessions)
+
+        for i, session_idx in enumerate(session_indices):
+            best_rotation[i], best_rotated_cloud_temp, min_distance[i] = find_best_rotation(
+                source_clouds[i], target_cloud
+            )
             best_rotated_cloud.append(best_rotated_cloud_temp)
             plot_point_clouds_interactive(
                 clouds=[best_rotated_cloud_temp, target_cloud],
-                session_num=f"across_{i+1}",
+                session_num=f"across_{session_labels[i]}",
                 save_dir=save_dir,
-                title=f"Across Session: Source Session {i+1} vs Target Session 0 (Min EMD: {min_distance[i]:.3g})"
+                title=(
+                    f"Across Session: rat {rat_labels[i]}, session {session_labels[i]} "
+                    f"vs target session {session_labels[0]} (Min EMD: {min_distance[i]:.3g})"
+                ),
             )
-            print(f"Across session: For source session {i+1}, min_distance = {min_distance[i]}")
-    
+            print(
+                f"Across session {session_labels[i]} (rat {rat_labels[i]}): "
+                f"min_distance = {min_distance[i]}"
+            )
+
         # Create an overall pairwise distance matrix across sessions.
-        n_sources = best_rotation.shape[0]
+        n_sources = num_sessions
         pairwise_matrix = np.zeros((n_sources, n_sources))
         for i in range(n_sources):
             for j in range(n_sources):
                 pairwise_matrix[i, j] = compute_emd(best_rotated_cloud[i], best_rotated_cloud[j])
-    
+
         overall_save_path = os.path.join(save_dir, "across_sessions_pairwise_distance.mat")
-        savemat(overall_save_path, {'pairwise_distance_matrix': pairwise_matrix})
+        savemat(
+            overall_save_path,
+            {
+                "pairwise_distance_matrix": pairwise_matrix,
+                "sesions_for_EMD": session_labels,
+                "rats_for_EMD": rat_labels,
+                "mean_H_error": [sessions[i].mean_H_difference for i in session_indices],
+            },
+        )
         print(f"Across-session pairwise distance matrix saved to {overall_save_path}")
 
-        backup_path = file_path.replace(".mat", "_backup.mat")  # Create a backup file
-        savemat(backup_path, mat_data)  # Save original file as a backup
+        backup_path = file_path.replace(".mat", "_backup.mat")
+        mat_data["pairwise_EMD_distance_matrix"] = pairwise_matrix
+        mat_data["sesions_for_EMD"] = session_labels
+        mat_data["rats_for_EMD"] = rat_labels
+        mat_data["mean_H_error"] = [sessions[i].mean_H_difference for i in session_indices]
+        savemat(backup_path, mat_data)
 
-        if mode == "across":
-            mat_data['pairwise_EMD_distance_matrix'] = pairwise_matrix
-            mat_data['sesions_for_EMD'] = [trials.sessions[i].session_idx for i in range(start_point,start_point + num_trials)]
-            mat_data['mean_H_error'] = [trials.sessions[i].mean_H_difference for i in range(start_point,start_point + num_trials)]
-            # Save the modified data to the original file
-            savemat(backup_path, mat_data)
+        print(f"Updated backup saved at: {backup_path}")
 
-            print(f"Backup saved at: {backup_path}")
-            print(f"Updated .mat file saved at: {file_path}")
-    
         # Create an interactive Plotly figure comparing the min distances.
         fig = go.Figure()
-        sessions_list = list(range(1, num_trials))  # source sessions 1 to num_trials-1
-        fig.add_trace(go.Scatter(
-            x=sessions_list,
-            y=min_distance,
-            mode='markers+lines',
-            marker=dict(size=8, color='blue'),
-            name='Min Wasserstein Distance'
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=session_labels,
+                y=min_distance,
+                mode="markers+lines",
+                marker=dict(size=8, color="blue"),
+                name="Min Wasserstein Distance",
+                text=[f"rat {rat}" for rat in rat_labels],
+                hovertemplate="Session %{x}<br>Rat %{text}<br>EMD² %{y:.4f}<extra></extra>",
+            )
+        )
         fig.update_layout(
-            title="Across-Session Comparison (Trial 0)",
-            xaxis_title="Source Session (compared to Target Session 0)",
-            yaxis_title="Minimum Wasserstein (EMD²)"
+            title=f"Across-Session Comparison (target session {session_labels[0]})",
+            xaxis_title="Session index",
+            yaxis_title="Minimum Wasserstein (EMD²)",
         )
         overall_plot_path = os.path.join(save_dir, "across_sessions_comparison.html")
         fig.write_html(overall_plot_path)

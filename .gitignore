@@ -23,4 +23,7 @@
 *.pth
 *.dhcp
 *.log
+*.json
+*.pyc
+*.svg
 /Users/devenshidfar/Desktop/Masters/NRSC_510B/cebra_control_recal/D:/DATA/DFINE_results

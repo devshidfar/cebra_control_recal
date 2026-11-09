@@ -86,7 +86,7 @@ function processSession(sessionData, session_idx, datasetType, keepTrail)
 
     % ---------------------------------------------------------------------
     % Video writer
-    dt  = 0.1;  % seconds/frame
+    dt  = 0.01;  % seconds/frame
     vw = VideoWriter(sprintf('Velocity%sSession%dEvolution.mp4', datasetType, session_idx), 'MPEG-4');
     vw.FrameRate = 1/dt;
     open(vw);
@@ -116,7 +116,7 @@ function processSession(sessionData, session_idx, datasetType, keepTrail)
 
         drawnow limitrate nocallbacks;
         writeVideo(vw, getframe(fig));
-        pause(0.5)
+        pause(0.01)
     end
 
     close(vw);
@@ -126,6 +126,6 @@ end
 
 % -------------------------------------------------------------------------
 % Example usage:
-allowed   = [36];
+allowed   = [35];
 keepTrail = false;
 processAllSessions(full_trial_2, full_trial_2, allowed, keepTrail);

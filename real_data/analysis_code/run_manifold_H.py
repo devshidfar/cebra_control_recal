@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io
@@ -12,7 +13,65 @@ from matplotlib.cm import ScalarMappable
 import matplotlib.colors as mcolors
 import cebra
 import matplotlib
+import re
+from packaging.version import Version
 matplotlib.use("Agg")
+matplotlib.rcParams["svg.fonttype"] = "path"
+
+
+def patch_svg_for_affinity_designer(svg_path):
+    """
+    Fix matplotlib SVG text positioning for Affinity Designer.
+
+    Affinity ignores x/y on <use> elements (matplotlib < 3.10); glyphs stack at
+    the origin. Matplotlib 3.10+ emits transform=translate(...) instead.
+    """
+    if Version(matplotlib.__version__) >= Version("3.10.0"):
+        return
+
+    with open(svg_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    def _fix_use_tag(match):
+        tag = match.group(0)
+        x_match = re.search(r'\bx="([^"]*)"', tag)
+        y_match = re.search(r'\by="([^"]*)"', tag)
+        if not x_match and not y_match:
+            return tag
+
+        x = x_match.group(1) if x_match else "0"
+        y = y_match.group(1) if y_match else "0"
+        tag = re.sub(r'\s*x="[^"]*"', "", tag)
+        tag = re.sub(r'\s*y="[^"]*"', "", tag)
+
+        translate = f'transform="translate({x} {y})"'
+        if 'transform="' in tag:
+            tag = re.sub(
+                r'transform="([^"]*)"',
+                lambda m: f'transform="translate({x} {y}) {m.group(1)}"',
+                tag,
+            )
+        elif tag.endswith("/>"):
+            tag = tag[:-2] + f" {translate}/>"
+        else:
+            tag = tag.replace(">", f" {translate}>", 1)
+        return tag
+
+    patched = re.sub(r"<use\b[^>]*/>", _fix_use_tag, content)
+    if patched != content:
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(patched)
+
+
+def save_svg(save_path, fig=None, **kwargs):
+    """Save a figure as SVG with Affinity Designer-compatible text positioning."""
+    if fig is None:
+        fig = plt.gcf()
+    kwargs.setdefault("format", "svg")
+    fig.savefig(save_path, **kwargs)
+    patch_svg_for_affinity_designer(save_path)
+
+
 import plotly.graph_objs as go
 from plotly.offline import plot
 from matplotlib.widgets import Slider
@@ -42,10 +101,10 @@ class SessionData:
     neural_data_land_on: np.ndarray
     embeddings_3d: np.ndarray
     high_vel_mask: np.ndarray
-    H0_value: float
-    H1_value: float
-    betti_0: int
-    betti_1: int
+    H0_value: any   # full H0 persistence diagram array (n_features x 2)
+    H1_value: any   # full H1 persistence diagram array (n_features x 2)
+    betti_0: int    # H0 bars above 99th percentile (Chaudhuri 2019 style)
+    betti_1: int    # H1 bars above 98th percentile — key ring-topology indicator
     principal_curves_3d: np.ndarray
     curve_params_3d: any 
     binned_hipp_angle: np.ndarray
@@ -76,6 +135,8 @@ class SessionData:
     SI_score_true: float
     mean_H_difference: float
     std_H_difference: float
+    embeddings_hd: np.ndarray = None
+    embedding_method: str = 'CEBRA'
 
 class CEBRAUtils:
     """
@@ -126,6 +187,46 @@ class CEBRAUtils:
         else:
             low_vel_embeddings = None
         return embeddings, low_vel_embeddings
+
+    @staticmethod
+    def apply_isomap(
+        neural_data_fit=None,
+        neural_data_embeddings=None,
+        neural_data_low_vel=None,
+        n_neighbors=5,
+        n_components=10,
+    ):
+        """Fit Isomap on training neural data and transform embedding/low-vel sets."""
+        from sklearn.manifold import Isomap
+
+        data_fit = np.sqrt(np.maximum(neural_data_fit, 0))
+        data_emb = np.sqrt(np.maximum(neural_data_embeddings, 0))
+        n_samples, n_features = data_fit.shape
+        if n_samples < 2:
+            raise ValueError("Need at least 2 time bins for Isomap.")
+
+        if n_features <= 10:
+            print(f"[INFO] Isomap: {n_features} cells ≤ 10 — using sqrt spike counts without reduction.")
+            embeddings = data_emb
+            if neural_data_low_vel is not None and neural_data_low_vel.shape[0] >= 1:
+                low_vel_embeddings = np.sqrt(np.maximum(neural_data_low_vel, 0))
+            else:
+                low_vel_embeddings = None
+            return embeddings, low_vel_embeddings
+
+        target_dim = min(n_components, n_features, n_samples - 1)
+        n_neighbors = min(n_neighbors, n_samples - 1)
+        print(f"[INFO] Isomap: reducing {n_features}D spike counts → {target_dim}D "
+              f"(n_neighbors={n_neighbors})")
+        iso = Isomap(n_neighbors=n_neighbors, n_components=target_dim)
+        iso.fit(data_fit)
+        embeddings = iso.transform(data_emb)
+        if neural_data_low_vel is not None and neural_data_low_vel.shape[0] >= 1:
+            low_vel_data = np.sqrt(np.maximum(neural_data_low_vel, 0))
+            low_vel_embeddings = iso.transform(low_vel_data)
+        else:
+            low_vel_embeddings = None
+        return embeddings, low_vel_embeddings
     
     @staticmethod
     def linear_interpolate_nans_2d(array_2d):
@@ -159,96 +260,347 @@ class CEBRAUtils:
         return array_1d
         
     @staticmethod
-    def run_persistent_homology(
-        embeddings, 
-        session_idx=None, 
-        session=None, 
-        results_save_path=None, 
-        dimension=3
+    def interpolate_outliers_on_spline(
+        embeddings,
+        outlier_mask,
+        principal_curve,
+        curve_params_tt,
+        behavioral_arrays=None,
     ):
         """
-        Runs persistent homology (via 'ripser') on the given 'embeddings',
-        plots & saves the corresponding persistence diagrams, and optionally
-        stores the raw results. Dimension typically = 2 or 3, but can be higher.
+        Replace outlier rows in `embeddings` (and optional parallel 1-D arrays)
+        by interpolating **along the fitted SPUD spline** rather than in raw
+        Euclidean space.
 
-        Parameters:
-        - embeddings (np.ndarray): shape (N, dim), the points for PH analysis
-        - session_idx (int, optional): session index, for labeling/saving
-        - session (object, optional): session metadata (rat, day, epoch)
-        - results_save_path (str, optional): Where to save outputs
-        - dimension (int, optional): Dimension of embeddings (2, 3, etc.)
+        For each contiguous run of outlier time-bins the method:
+          1. Projects the good flanking bins onto the spline (nearest-point
+             look-up in the fine curve) to obtain their arc-length parameters.
+          2. Interpolates the arc-length parameter circularly (handles wrap-around
+             at the closed-loop join) over the run.
+          3. Evaluates the spline at the interpolated parameters to get
+             reconstruction coordinates that lie exactly on the manifold.
+          4. Linearly interpolates any 1-D behavioral arrays across the gap
+             (same simple interp as before — only the embedding geometry is
+             improved).
+
+        Parameters
+        ----------
+        embeddings : np.ndarray, shape (N, D)
+            Embedding array with outlier rows already set to NaN.
+        outlier_mask : np.ndarray[bool], shape (N,)
+            True where a time-bin is an outlier.
+        principal_curve : np.ndarray, shape (M, D)
+            Dense spline curve evaluated by `fit_spud_to_cebra`.
+        curve_params_tt : np.ndarray, shape (M,)
+            Arc-length parameter for each point on the curve.  [0, 1] when the
+            preliminary SPUD fit uses ref_angle=None; [0, 2π] after ref-angle
+            alignment in the main fit.
+        behavioral_arrays : list of np.ndarray, shape (N,), optional
+            Additional 1-D arrays (hipp_angle, true_angle, est_gain, vel …) to
+            patch with simple linear interpolation.
+
+        Returns
+        -------
+        embeddings_patched : np.ndarray, shape (N, D)
+        behavioral_arrays_patched : list of np.ndarray  (empty list if None)
         """
+        from scipy.spatial import KDTree
 
-        # Create a folder for storing PH results
-        ph_dir = os.path.join(results_save_path, "persistent_homology", f"session_{session_idx}", f"dimension_{dimension}")
+        embeddings_patched = embeddings.copy()
+        if behavioral_arrays is not None:
+            beh_patched = [a.copy() for a in behavioral_arrays]
+        else:
+            beh_patched = []
+
+        tt = np.asarray(curve_params_tt)   # arc-length params, shape (M,)
+        N = embeddings_patched.shape[0]
+        emb_dim   = embeddings_patched.shape[1]
+        curve_dim = principal_curve.shape[1]
+
+        # Closed-loop period: preliminary SPUD (ref_angle=None) uses tt ∈ [0, 1];
+        # main fit after ref-angle alignment uses tt ∈ [0, 2π].
+        tt_period = 1.0 if np.nanmax(tt) <= 1.0 + 1e-6 else 2.0 * np.pi
+        half_period = tt_period / 2.0
+
+        # When the embedding lives in a higher-dimensional space than the
+        # 3-D spline (e.g. 10-D CEBRA with a 3-D SPUD spline), KD-tree
+        # projection is undefined.  Fall back to linear interpolation for
+        # the embedding coordinates and still patch behavioral arrays below.
+        use_spline_for_emb = (emb_dim == curve_dim)
+        if not use_spline_for_emb:
+            print(
+                f"[INFO] interpolate_outliers_on_spline: embedding dim ({emb_dim}) "
+                f"!= curve dim ({curve_dim}) — using linear interp for embedding, "
+                f"spline arc-length interp for behavioral arrays."
+            )
+
+        inlier_mask = ~outlier_mask
+        indices = np.arange(N)
+
+        # Find the starts/ends of each contiguous outlier block
+        padded = np.concatenate([[False], outlier_mask, [False]])
+        starts = np.where(~padded[:-2] & padded[1:-1])[0]   # first outlier index
+        ends   = np.where( padded[1:-1] & ~padded[2:])[0]   # last  outlier index (inclusive)
+
+        # Pre-sort tt once for fast 1-D nearest-parameter lookup
+        tt_order      = np.argsort(tt)
+        tt_sorted     = tt[tt_order]
+
+        # Build KD-tree on the spline (used for projecting flanking bins)
+        curve_tree = KDTree(principal_curve)
+
+        for start, end in zip(starts, ends):
+            before = start - 1
+            after  = end   + 1
+            gap_len = end - start + 1
+
+            # ---- Edge runs: linear fallback for embedding ----
+            if before < 0 or after >= N:
+                for dim in range(emb_dim):
+                    x_good = indices[inlier_mask]
+                    y_good = embeddings_patched[inlier_mask, dim]
+                    if len(x_good) < 2:
+                        continue
+                    embeddings_patched[start:end+1, dim] = np.interp(
+                        indices[start:end+1], x_good, y_good
+                    )
+                continue
+
+            # ---- Spline arc-length interpolation ----
+            query_before = embeddings_patched[before, :curve_dim]
+            query_after  = embeddings_patched[after,  :curve_dim]
+            _, idx_before = curve_tree.query(query_before)
+            _, idx_after  = curve_tree.query(query_after)
+            tt_before = tt[idx_before]
+            tt_after  = tt[idx_after]
+
+            # Circular interpolation along the shorter arc on the closed loop
+            delta = tt_after - tt_before
+            if delta > half_period:
+                delta -= tt_period
+            elif delta < -half_period:
+                delta += tt_period
+
+            fracs = np.arange(1, gap_len + 1) / (gap_len + 1)
+            tt_interp = (tt_before + fracs * delta) % tt_period
+
+            # Map each interpolated tt value → nearest index in the sorted tt array
+            search_idx   = np.searchsorted(tt_sorted, tt_interp)
+            search_idx   = np.clip(search_idx, 0, len(tt) - 1)
+            curve_idx_1d = tt_order[search_idx]
+
+            if use_spline_for_emb:
+                embeddings_patched[start:end+1] = principal_curve[curve_idx_1d]
+            else:
+                # Linear interp in HD space
+                for dim in range(emb_dim):
+                    x_good = indices[inlier_mask]
+                    y_good = embeddings_patched[inlier_mask, dim]
+                    if len(x_good) < 2:
+                        continue
+                    embeddings_patched[start:end+1, dim] = np.interp(
+                        indices[start:end+1], x_good, y_good
+                    )
+
+        # Patch behavioral arrays with simple linear interp
+        for arr in beh_patched:
+            arr[outlier_mask] = np.nan
+            CEBRAUtils.linear_interpolate_nans_1d(arr)
+
+        return embeddings_patched, beh_patched
+
+    @staticmethod
+    def neural_data_to_isomap(neural_data, n_neighbors=5, n_components=10):
+        """
+        Prepare neural spike-count matrix for persistent homology via Isomap,
+        following Chaudhuri et al. 2019: sqrt variance-stabilization, then
+        Isomap to n_components (only when n_cells > 10).
+        """
+        from sklearn.manifold import Isomap
+
+        data = np.sqrt(np.maximum(neural_data, 0))
+        n_samples, n_features = data.shape
+        if n_samples < 2:
+            raise ValueError("Need at least 2 time bins for Isomap.")
+
+        if n_features <= 10:
+            print(f"[INFO] Isomap PH: {n_features} cells ≤ 10 — using sqrt spike counts without Isomap.")
+            return data
+
+        target_dim = min(n_components, n_features, n_samples - 1)
+        n_neighbors = min(n_neighbors, n_samples - 1)
+        print(f"[INFO] Isomap PH: reducing {n_features}D spike counts → {target_dim}D "
+              f"(n_neighbors={n_neighbors})")
+        iso = Isomap(n_neighbors=n_neighbors, n_components=target_dim)
+        return iso.fit_transform(data)
+
+    @staticmethod
+    def run_persistent_homology(
+        embeddings,
+        session_idx=None,
+        session=None,
+        results_save_path=None,
+        dimension=3,
+        source_label='cebra',
+    ):
+        """
+        Runs persistent homology (via 'ripser') on the given 'embeddings' and
+        plots barcode diagrams in the style of Chaudhuri et al. 2019 (Nat Neurosci):
+          - H0, H1, H2 computed via Ripser
+          - Only the longest bars (above 99th / 98th / 90th percentile of bar
+            lengths for H0 / H1 / H2) are plotted — same cutoffs as the paper
+          - Barcodes are plotted as horizontal lines (birth → death), not as
+            persistence-diagram scatter plots
+          - H2 is computed on a subsample of ≤1500 points for tractability
+
+        Returns
+        -------
+        H0_values, H1_values : np.ndarray  (full diagrams, for downstream use)
+        betti_0, betti_1     : int          (bars above 99th / 98th percentile)
+        """
+        ph_dir = os.path.join(
+            results_save_path, "persistent_homology",
+            f"session_{session_idx}", f"{source_label}_dimension_{dimension}"
+        )
         os.makedirs(ph_dir, exist_ok=True)
 
-        # Run ripser (maxdim=1 => compute H0, H1)
-        print(f"[INFO] Computing persistent homology for session {session_idx}, dimension {dimension} ...")
-        ph_result = ripser(embeddings, maxdim=1)  
-        diagrams = ph_result['dgms']   # diagram[0] = H0, diagram[1] = H1
+        print(f"[INFO] Computing persistent homology ({source_label}, dim={dimension}) "
+              f"for session {session_idx} ...")
+        ph_t0 = time.perf_counter()
 
-        #return H0 and H1 values
-
+        n_points, n_dims = embeddings.shape
+        # --- H0 and H1 on the full embedding ---
+        print(f"[INFO] Ripser H0+H1 starting: n={n_points}, dim={n_dims}, maxdim=1")
+        t0 = time.perf_counter()
+        ph_result = ripser(embeddings, maxdim=1)
+        t1 = time.perf_counter()
+        print(f"[INFO] Ripser H0+H1 finished in {t1 - t0:.2f}s "
+              f"(H0 bars={len(ph_result['dgms'][0])}, H1 bars={len(ph_result['dgms'][1])})")
+        diagrams  = ph_result['dgms']
         H0_values = diagrams[0]
         H1_values = diagrams[1]
 
-        betti_0, betti_1 = CEBRAUtils.compute_betti_numbers(H0_values, H1_values, lifespan_fraction=0.5)
-
-        # Save raw results
-        np.savez(os.path.join(ph_dir, "ripser_result.npz"), H0=diagrams[0], H1=diagrams[1])
-        print(f"[INFO] Saved raw PH results (H0 & H1) to {ph_dir}")
-
-
-
-        # Plot and save the persistence diagram
-        fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-
-            # H0 plot
-        if diagrams[0].size == 0:
-            print("[DEBUG] No H0 features found in the persistence diagram. Skipping H0 Barcode plot.")
+        # --- H2 on a subsample if the cloud is large (same approach as Chaudhuri 2019) ---
+        if len(embeddings) > 800:
+            rng = np.random.default_rng(seed=0)
+            idx_sub = rng.choice(len(embeddings), 800, replace=False)
+            emb_sub = embeddings[idx_sub]
         else:
-            plot_diagrams(diagrams[0], show=False, ax=ax[0], title="H0 Barcode")
+            emb_sub = embeddings
+        n_sub = len(emb_sub)
+        print(f"[INFO] Ripser H2 starting: n={n_sub}, dim={n_dims}, maxdim=2 (subsampled={n_sub < n_points})")
+        t2 = time.perf_counter()
+        H2_values = ripser(emb_sub, maxdim=2)['dgms'][2]
+        t3 = time.perf_counter()
+        print(f"[INFO] Ripser H2 finished in {t3 - t2:.2f}s (H2 bars={len(H2_values)})")
+        print(f"[INFO] Total Ripser time: {t3 - t0:.2f}s")
 
-        # H1 plot
-        if diagrams[1].size == 0:
-            print("[DEBUG] No H1 features found in the persistence diagram. Skipping H1 Barcode plot.")
-        else:
-            plot_diagrams(diagrams[1], show=False, ax=ax[1], title="H1 Barcode")
+        # --- Save raw diagrams ---
+        np.savez(
+            os.path.join(ph_dir, "ripser_result.npz"),
+            H0=H0_values, H1=H1_values, H2=H2_values
+        )
+        print(f"[INFO] Saved raw PH results (H0, H1, H2) to {ph_dir}")
 
+        # --- Percentile cutoffs for plotting (Chaudhuri et al. 2019, Methods) ---
+        plot_prcnt = {'H0': 99, 'H1': 98, 'H2': 90}
+
+        def _plot_barcode(ax, diagram, prcnt, title, color):
+            """Draw horizontal barcode keeping only bars above `prcnt`-th percentile."""
+            if diagram.size == 0:
+                ax.set_title(f"{title}  (no features)")
+                ax.set_yticks([])
+                return 0
+
+            lifespans = diagram[:, 1] - diagram[:, 0]
+            finite_mask = np.isfinite(lifespans)
+            finite_ls   = lifespans[finite_mask]
+
+            if finite_ls.size == 0:
+                ax.set_title(f"{title}  (all infinite)")
+                ax.set_yticks([])
+                return 0
+
+            threshold = np.percentile(finite_ls, prcnt)
+            keep = lifespans > threshold
+
+            diag_plot = diagram[keep].copy()
+            # Replace any remaining inf deaths with 10 % beyond the longest finite death
+            max_finite_death = np.nanmax(diag_plot[:, 1][np.isfinite(diag_plot[:, 1])]) \
+                               if np.any(np.isfinite(diag_plot[:, 1])) else 1.0
+            diag_plot[~np.isfinite(diag_plot[:, 1]), 1] = max_finite_death * 1.1
+
+            # Sort longest bar on top
+            order = np.argsort(diag_plot[:, 1] - diag_plot[:, 0])[::-1]
+            diag_plot = diag_plot[order]
+
+            for row, (birth, death) in enumerate(diag_plot):
+                ax.plot([birth, death], [row, row], color=color, linewidth=2)
+
+            n_shown = len(diag_plot)
+            ax.set_xlim(left=0)
+            ax.set_ylim(-1, n_shown)
+            ax.set_yticks([])
+            ax.set_xlabel("Filtration scale")
+            ax.set_title(f"{title}  (top {100 - prcnt:.0f}%,  {n_shown} bars)")
+            return n_shown
+
+        fig, axes = plt.subplots(3, 1, figsize=(12, 9))
+        n_h0 = _plot_barcode(axes[0], H0_values, plot_prcnt['H0'], 'H₀  (connected components)', 'red')
+        n_h1 = _plot_barcode(axes[1], H1_values, plot_prcnt['H1'], 'H₁  (loops / ring)',          'green')
+        n_h2 = _plot_barcode(axes[2], H2_values, plot_prcnt['H2'], 'H₂  (voids)',                 'purple')
+
+        title_str = (
+            f"Persistent Homology Barcodes\n"
+            f"Session={session_idx}"
+        )
         if session:
-            fig.suptitle(f"Persistent Homology\nSession={session_idx}, Rat={session.rat}, Day={session.day}, Epoch={session.epoch}")
-        else:
-            fig.suptitle(f"Persistent Homology - Session {session_idx}")
-
+            title_str += f", Rat={session.rat}, Day={session.day}, Epoch={session.epoch}"
+        fig.suptitle(title_str)
         plt.tight_layout(rect=[0, 0, 1, 0.95])
-        fig_save_path = os.path.join(ph_dir, "barcode_diagrams.png")
-        plt.savefig(fig_save_path, dpi=300)
+
+        fig_save_path = os.path.join(ph_dir, "barcode_diagrams.svg")
+        save_svg(fig_save_path, fig=fig, bbox_inches='tight')
         plt.close(fig)
+        print(f"[INFO] Saved barcode diagrams to: {fig_save_path}")
 
-        print(f"[INFO] Saved persistence diagrams to: {fig_save_path}")
-        
-        # If you want the standard "persistence diagram" style, you can also do:
-        #   plot_diagrams(diagrams, show=True)
-        # or store them in additional files.`
+        # --- Summary metrics ---
+        # Max H1 lifespan is the key ring-topology indicator (Chaudhuri 2019)
+        h1_ls_finite = (H1_values[:, 1] - H1_values[:, 0])
+        h1_ls_finite = h1_ls_finite[np.isfinite(h1_ls_finite)]
+        max_H1_lifespan = float(np.max(h1_ls_finite)) if h1_ls_finite.size > 0 else 0.0
 
+        h0_ls_finite = (H0_values[:, 1] - H0_values[:, 0])
+        h0_ls_finite = h0_ls_finite[np.isfinite(h0_ls_finite)]
+        max_H0_lifespan = float(np.max(h0_ls_finite)) if h0_ls_finite.size > 0 else 0.0
+
+        print(f"[INFO] Max H1 lifespan: {max_H1_lifespan:.4f}  (ring indicator — long = ring-like manifold)")
+        print(f"[INFO] Bars shown above percentile threshold — H0: {n_h0},  H1: {n_h1},  H2: {n_h2}")
+
+        # betti_0 / betti_1 now count bars above the paper-style percentile cutoffs
+        betti_0, betti_1 = CEBRAUtils.compute_betti_numbers(H0_values, H1_values)
+        print(f"[INFO] Persistent homology total wall time: {time.perf_counter() - ph_t0:.2f}s")
         return H0_values, H1_values, betti_0, betti_1
-    
+
     @staticmethod
-    def compute_betti_numbers(H0_array, H1_array, lifespan_fraction=0.5):
-        def count_features(diagram, frac):
+    def compute_betti_numbers(H0_array, H1_array):
+        """
+        Count persistent bars above the paper-style percentile cutoffs
+        (Chaudhuri et al. 2019): 99th percentile for H0, 98th for H1.
+        These match the display thresholds used in the barcode plots.
+        """
+        def count_above_percentile(diagram, prcnt):
             if diagram.size == 0:
                 return 0
             lifespans = diagram[:, 1] - diagram[:, 0]
             lifespans = lifespans[np.isfinite(lifespans)]
-            if len(lifespans) == 0:
+            if lifespans.size == 0:
                 return 0
-            max_lifespan = np.max(lifespans)
-            threshold = max_lifespan * frac
+            threshold = np.percentile(lifespans, prcnt)
             return int(np.sum(lifespans > threshold))
 
-        betti_0 = count_features(H0_array, lifespan_fraction)
-        betti_1 = count_features(H1_array, lifespan_fraction)
+        betti_0 = count_above_percentile(H0_array, 99)
+        betti_1 = count_above_percentile(H1_array, 98)
         return betti_0, betti_1
 
     
@@ -409,7 +761,7 @@ class CEBRAUtils:
         # Show the plot
         plt.show()
 
-        plt.savefig(f"{save_path}/3D_embeddings_session{session_idx}",dpi=300,bbox_inches='tight')
+        save_svg(f"{save_path}/3D_embeddings_session{session_idx}.svg", bbox_inches='tight')
     
         return
     
@@ -630,8 +982,8 @@ class CEBRAUtils:
             ax.scatter(final_knots[:, 0], final_knots[:, 1], final_knots[:, 2], c='red', label='Initial Knots')
             ax.set_title(f"Initial Knots for Session {session_idx}")
             ax.legend()
-            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.png")
-            plt.savefig(plot_save_path)
+            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.svg")
+            save_svg(plot_save_path, fig=fig, bbox_inches='tight')
             plt.close()
         
         # --- Step 4: Fit a B-spline to the Embeddings ---
@@ -702,7 +1054,7 @@ class CEBRAUtils:
 
         # Plot initial knots in 3D
         if dimension_3d == 1 and results_save_path:
-            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.png")
+            plot_save_path = os.path.join(results_save_path, f"initial_knots_session_{session_idx}.svg")
             CEBRAUtils.plot_initial_knots(embeddings, init_knots, session_idx, session, save_path=plot_save_path)
 
         curr_fit_params = {'init_knots': init_knots, **fit_params}
@@ -774,7 +1126,7 @@ class CEBRAUtils:
         ax.set_zlabel('Embedding Dimension 3')
         ax.legend()
         if save_path:
-            plt.savefig(save_path)
+            save_svg(save_path, bbox_inches='tight')
             plt.close()
         else:
             plt.show()
@@ -837,6 +1189,43 @@ class CEBRAUtils:
         """
         kernel = np.ones(window_size) / window_size
         return np.convolve(data, kernel, mode='valid')
+
+    @staticmethod
+    def expand_embeddings_to_full_trial(embeddings_high_vel, neural_data_full_trial, high_vel_mask, interp=True):
+        """Place high-velocity CEBRA embeddings into a full-trial array.
+
+        When *interp=True* (default) NaN gaps are immediately filled with
+        linear interpolation (original behaviour).  Pass *interp=False* to
+        return the raw NaN-filled array so the caller can fill gaps via a
+        manifold-aware method instead.
+        """
+        full_embeddings = np.empty((neural_data_full_trial.shape[0], embeddings_high_vel.shape[1]))
+        full_embeddings[:] = np.nan
+        full_embeddings[high_vel_mask, :] = embeddings_high_vel
+        if interp:
+            return CEBRAUtils.linear_interpolate_nans_2d(full_embeddings)
+        return full_embeddings
+
+    @staticmethod
+    def lap_window_to_bin_window(lap_number, lap_window):
+        """Convert a smoothing window in laps to a bin count along lap-sorted data."""
+        lap_number = np.asarray(lap_number, dtype=float)
+        lap_span = np.max(lap_number) - np.min(lap_number)
+        if lap_span <= 0:
+            return 1
+        samples_per_lap = len(lap_number) / lap_span
+        return max(1, int(round(lap_window * samples_per_lap)))
+
+    @staticmethod
+    def trim_axis_for_moving_average(axis, window_size):
+        """Trim a companion axis to match 'valid' moving-average convolution output."""
+        axis = np.asarray(axis)
+        if window_size <= 1:
+            return axis
+        trim_end = window_size // 2
+        if trim_end == 0:
+            return axis[(window_size - 1) // 2 :]
+        return axis[(window_size - 1) // 2 : -trim_end]
 
     @staticmethod
     def get_var_over_lap(var=None, true_angle=None):
@@ -935,8 +1324,8 @@ class CEBRAUtils:
                    ha='right', va='bottom', transform=ax[2].transAxes, fontsize=25)
 
         os.makedirs(save_dir, exist_ok=True)
-        filename = f"SI_{behav_var_name}.png"
-        fig.savefig(os.path.join(save_dir, filename), format='png', dpi=300, bbox_inches='tight')
+        filename = f"SI_{behav_var_name}.svg"
+        save_svg(os.path.join(save_dir, filename), fig=fig, bbox_inches='tight')
         if pdf:
             pdf.savefig(fig)
         plt.close(fig)
@@ -961,7 +1350,7 @@ class CEBRAUtils:
         if not (len(binned_hipp_angle) == len(binned_true_angle) == len(binned_est_gain)):
             raise ValueError("All input arrays must have the same length.")
 
-        filename = "behav_vars.png"
+        filename = "behav_vars.svg"
         full_save_path = os.path.join(save_dir)
         os.makedirs(full_save_path, exist_ok=True)
 
@@ -971,7 +1360,7 @@ class CEBRAUtils:
         x = np.arange(length)
         ax.plot(x, binned_hipp_angle[100:200], label='Hippocampal Angle (rad)', color='blue', linewidth=1.5)
         ax.plot(x, binned_true_angle[100:200], label='True Angle (rad)', color='green', linewidth=1.5)
-        ax.plot(x, binned_est_gain[100:200], label='Estimated Gain', color='red', linewidth=1.5)
+        ax.plot(x, binned_est_gain[100:200], label='H (Fourier method)', color='red', linewidth=1.5)
 
         ax.set_xlabel('time (s)', fontsize=14)
         ax.set_ylabel('Value', fontsize=14)
@@ -981,7 +1370,7 @@ class CEBRAUtils:
         plt.tight_layout()
 
         save_path = os.path.join(full_save_path, filename)
-        fig.savefig(save_path, format='png', dpi=300, bbox_inches='tight')
+        save_svg(save_path, fig=fig, bbox_inches='tight')
         plt.close(fig)
 
     @staticmethod
@@ -1047,16 +1436,110 @@ class CEBRAUtils:
 
         # Save the plot if save_path is specified
         if save_path:
-            filename = f"decoded_var_{behav_var_name}.png" if behav_var_name else "decoded_var_plot.png"
+            filename = f"decoded_var_{behav_var_name}.svg" if behav_var_name else "decoded_var_plot.svg"
             os.makedirs(save_path, exist_ok=True)
             full_path = os.path.join(save_path, filename)
-            plt.savefig(full_path, dpi=300, bbox_inches='tight')
+            save_svg(full_path, bbox_inches='tight')
             if pdf:
                 pdf.savefig()
             print(f"[INFO] Decoded vs. True plot saved to {full_path}")
 
         plt.show()
         plt.close()
+
+    @staticmethod
+    def plot_Hs_over_time(
+        est_H=None,
+        decode_H=None,
+        behav_var=None,
+        behav_var_name=None,
+        session_idx=None,
+        session=None,
+        save_path=None,
+        tag=None,
+        is_moving_avg=False,
+        SI_score=None,
+        decode_err=None,
+        pdf=None,
+    ):
+        if est_H is None or decode_H is None:
+            raise ValueError("est_H and decode_H must both be provided.")
+
+        if behav_var is not None and behav_var_name is None:
+            raise ValueError("behav_var_name must be provided if behav_var is used.")
+
+        min_length = min(len(est_H), len(decode_H))
+        if behav_var is not None:
+            min_length = min(min_length, len(behav_var))
+
+        est_gain_trimmed = np.asarray(est_H[:min_length])
+        decode_gain_trimmed = np.asarray(decode_H[:min_length])
+        times = np.arange(min_length)
+
+        avg_est_gain = np.mean(est_gain_trimmed)
+        avg_decode_gain = np.mean(decode_gain_trimmed)
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        if behav_var is not None:
+            behav_var_trimmed = np.asarray(behav_var[:min_length])
+            avg_behav_var = np.mean(behav_var_trimmed)
+            norm = mcolors.Normalize(vmin=np.min(behav_var_trimmed), vmax=np.max(behav_var_trimmed))
+            cmap = plt.get_cmap('viridis')
+            sm = ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+            ax.scatter(times, est_gain_trimmed, c=behav_var_trimmed, cmap=cmap, label='Fourier method', alpha=0.7)
+            ax.scatter(times, decode_gain_trimmed, c=behav_var_trimmed, cmap=cmap, label='Manifold method', marker='x', alpha=0.7)
+            cbar = fig.colorbar(sm, ax=ax)
+            cbar.set_label(behav_var_name)
+        else:
+            ax.plot(times, est_gain_trimmed, label='Fourier method', color='blue')
+            ax.plot(times, decode_gain_trimmed, label='Manifold method', color='red', alpha=0.7)
+
+        avg_text = (
+            f"Avg Fourier method H: {avg_est_gain:.2f}\n"
+            f"Avg Manifold method H: {avg_decode_gain:.2f}\n"
+        )
+        if behav_var is not None:
+            avg_text += f"Avg {behav_var_name}: {avg_behav_var:.2f}\n"
+        if SI_score is not None:
+            avg_text += f"SI Score: {SI_score:.2f}\n"
+        if decode_err is not None:
+            avg_text += f"Avg |Fourier - Manifold|: {decode_err:.2f}\n"
+
+        ax.text(
+            0.02, 0.98, avg_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+        )
+
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel('Gain')
+        title = 'Fourier method vs Manifold method'
+        if is_moving_avg:
+            title += ' (Moving Average)'
+        if tag:
+            title += f' - {tag}'
+        if session_idx is not None and session is not None:
+            title += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+        ax.set_title(title)
+        ax.legend()
+        ax.grid(alpha=0.3)
+        fig.tight_layout()
+
+        if save_path:
+            dir_path = os.path.join(save_path, 'h_plots', f'session_{session_idx}')
+            os.makedirs(dir_path, exist_ok=True)
+            filename = f"h_over_time_{tag}.svg" if tag else "h_over_time.svg"
+            full_path = os.path.join(dir_path, filename)
+            save_svg(full_path, fig=fig, bbox_inches='tight')
+            if pdf is not None:
+                pdf.savefig(fig)
+            plt.close(fig)
+            print(f"[INFO] Saved H-over-time plot to {full_path}")
+        else:
+            plt.show()
+            plt.close(fig)
 
     @staticmethod
     def plot_Hs_over_laps(
@@ -1067,6 +1550,7 @@ class CEBRAUtils:
         session=None,
         save_path=None,
         tag=None,
+        lap_ma_window=None,
         SI_score=None,
         decode_err=None,
         pdf=None,
@@ -1089,10 +1573,25 @@ class CEBRAUtils:
         decode_H_trimmed = decode_H[:min_length]
         lap_trimmed = lap_number[:min_length]
 
+        if lap_ma_window is not None:
+            window_bins = CEBRAUtils.lap_window_to_bin_window(lap_trimmed, lap_ma_window)
+            if min_length < window_bins:
+                raise ValueError(
+                    f"Not enough lap-sorted points ({min_length}) for "
+                    f"{lap_ma_window}-lap smoothing (window={window_bins} bins)."
+                )
+            est_H_trimmed = CEBRAUtils.compute_moving_average(est_H_trimmed, window_bins)
+            decode_H_trimmed = CEBRAUtils.compute_moving_average(decode_H_trimmed, window_bins)
+            lap_trimmed = CEBRAUtils.trim_axis_for_moving_average(lap_trimmed, window_bins)
+
         # Plot
         plt.figure(figsize=(12, 6))
-        plt.plot(lap_trimmed, est_H_trimmed, label='est_H', color='blue', marker='o', linestyle='-')
-        plt.plot(lap_trimmed, decode_H_trimmed, label='decode_H', color='red', marker='x', linestyle='--')
+        if lap_ma_window is not None:
+            plt.plot(lap_trimmed, est_H_trimmed, label='Fourier method', color='blue', linestyle='-')
+            plt.plot(lap_trimmed, decode_H_trimmed, label='Manifold method', color='red', linestyle='--')
+        else:
+            plt.plot(lap_trimmed, est_H_trimmed, label='Fourier method', color='blue', marker='o', linestyle='-')
+            plt.plot(lap_trimmed, decode_H_trimmed, label='Manifold method', color='red', marker='x', linestyle='--')
 
         ax = plt.gca()
 
@@ -1100,11 +1599,11 @@ class CEBRAUtils:
         avg_est_H = np.mean(est_H_trimmed)
         avg_decode_H = np.mean(decode_H_trimmed)
 
-        annotation_text = f'Avg est_H: {avg_est_H:.2f}\nAvg decode_H: {avg_decode_H:.2f}'
+        annotation_text = f'Avg Fourier method H: {avg_est_H:.2f}\nAvg Manifold method H: {avg_decode_H:.2f}'
         if SI_score is not None:
             annotation_text += f'\nSI Score: {SI_score:.2f}'
         if decode_err is not None:
-            annotation_text += f'\nDecode Error: {decode_err:.2f}'
+            annotation_text += f'\nAvg |Fourier - Manifold|: {decode_err:.2f}'
 
         # Add text annotation
         ax.text(0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=12,
@@ -1114,7 +1613,9 @@ class CEBRAUtils:
         # Axes labels and title
         plt.xlabel('Lap Number', fontsize=14)
         plt.ylabel('H Value', fontsize=14)
-        title_str = 'est_H and decode_H Values Over Laps'
+        title_str = 'Fourier method vs Manifold method Over Laps'
+        if lap_ma_window is not None:
+            title_str += f' (MA: {lap_ma_window} lap{"s" if lap_ma_window != 1 else ""})'
         if session_idx is not None and session is not None:
             # e.g. "Session 12: Rat 101, Day 3, Epoch m1"
             title_str += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
@@ -1135,16 +1636,184 @@ class CEBRAUtils:
             os.makedirs(dir_path, exist_ok=True)
 
             # Construct filename
-            filename = f"h_over_laps_{tag}.png" if tag else "h_over_laps.png"
+            filename = f"h_over_laps_{tag}.svg" if tag else "h_over_laps.svg"
             full_path = os.path.join(dir_path, filename)
             
-            plt.savefig(full_path, dpi=300)
+            save_svg(full_path, bbox_inches='tight')
             if pdf:
                 pdf.savefig()
             plt.close()
             print(f"[INFO] Saved Hs-over-laps plot to {full_path}")
         else:
             plt.show()
+
+    @staticmethod
+    def plot_Hs_over_laps_accel_heatmap(
+        decode_H=None,
+        lap_number=None,
+        acceleration=None,
+        est_H=None,
+        session_idx=None,
+        session=None,
+        save_path=None,
+        tag=None,
+        lap_ma_window=None,
+        SI_score=None,
+        decode_err=None,
+        pdf=None,
+    ):
+        """
+        Plot Manifold-method H over laps with the curve heatmapped (colored) by acceleration.
+        Optionally overlays Fourier-method H (blue) as a reference line. Saves as SVG.
+
+        Acceleration should already be computed from ±3-bin-smoothed 1s velocity;
+        lap MA (if any) is applied only to H, not to acceleration.
+        """
+        if decode_H is None or lap_number is None or acceleration is None:
+            raise ValueError("decode_H, lap_number, and acceleration must all be provided.")
+
+        decode_H = np.asarray(decode_H)
+        lap_number = np.asarray(lap_number)
+        acceleration = np.asarray(acceleration)
+
+        if decode_H.ndim != 1 or lap_number.ndim != 1 or acceleration.ndim != 1:
+            raise ValueError("decode_H, lap_number, and acceleration must be 1D arrays.")
+
+        min_length = min(len(decode_H), len(lap_number), len(acceleration))
+        if est_H is not None:
+            est_H = np.asarray(est_H)
+            min_length = min(min_length, len(est_H))
+            est_H_trimmed = est_H[:min_length]
+        else:
+            est_H_trimmed = None
+
+        decode_H_trimmed = decode_H[:min_length]
+        lap_trimmed = lap_number[:min_length]
+        accel_trimmed = acceleration[:min_length]
+
+        if lap_ma_window is not None:
+            window_bins = CEBRAUtils.lap_window_to_bin_window(lap_trimmed, lap_ma_window)
+            if min_length < window_bins:
+                raise ValueError(
+                    f"Not enough lap-sorted points ({min_length}) for "
+                    f"{lap_ma_window}-lap smoothing (window={window_bins} bins)."
+                )
+            # Smooth H over laps; keep acceleration at short (bin) timescale and
+            # only trim it to match the valid MA length.
+            decode_H_trimmed = CEBRAUtils.compute_moving_average(decode_H_trimmed, window_bins)
+            lap_trimmed = CEBRAUtils.trim_axis_for_moving_average(lap_trimmed, window_bins)
+            accel_trimmed = CEBRAUtils.trim_axis_for_moving_average(accel_trimmed, window_bins)
+            if est_H_trimmed is not None:
+                est_H_trimmed = CEBRAUtils.compute_moving_average(est_H_trimmed, window_bins)
+
+        fig, (ax, ax_accel) = plt.subplots(
+            2, 1, figsize=(12, 8), sharex=True,
+            gridspec_kw={'height_ratios': [2, 1], 'hspace': 0.08},
+        )
+
+        if est_H_trimmed is not None:
+            ax.plot(
+                lap_trimmed, est_H_trimmed,
+                color='blue', linestyle='-', linewidth=1.5, alpha=0.85,
+                label='Fourier method', zorder=1,
+            )
+
+        # Symmetric color limits so zero accel sits at the colormap center
+        accel_abs_max = np.nanmax(np.abs(accel_trimmed))
+        if not np.isfinite(accel_abs_max) or accel_abs_max == 0:
+            accel_abs_max = 1.0
+        norm = mcolors.TwoSlopeNorm(vmin=-accel_abs_max, vcenter=0.0, vmax=accel_abs_max)
+        cmap = plt.get_cmap('RdYlGn')
+        sm = ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+
+        points = np.array([lap_trimmed, decode_H_trimmed]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc = LineCollection(
+            segments,
+            colors=cmap(norm(accel_trimmed[:-1])),
+            linewidths=2.5,
+            label='Manifold method (colored by accel)',
+            zorder=2,
+        )
+        ax.add_collection(lc)
+        # Legend proxy (LineCollection may not show cleanly in the legend)
+        ax.plot([], [], color=cmap(0.75), linewidth=2.5, label='Manifold method (colored by accel)')
+
+        cbar = fig.colorbar(sm, ax=[ax, ax_accel], fraction=0.03, pad=0.02)
+        cbar.set_label('Acceleration', fontsize=12)
+
+        avg_decode_H = np.mean(decode_H_trimmed)
+        avg_accel = np.mean(accel_trimmed)
+        annotation_text = f'Avg Manifold method H: {avg_decode_H:.2f}\nAvg Acceleration: {avg_accel:.2f}'
+        if est_H_trimmed is not None:
+            annotation_text = f'Avg Fourier method H: {np.mean(est_H_trimmed):.2f}\n' + annotation_text
+        if SI_score is not None:
+            annotation_text += f'\nSI Score: {SI_score:.2f}'
+        if decode_err is not None:
+            annotation_text += f'\nAvg |Fourier - Manifold|: {decode_err:.2f}'
+
+        ax.text(
+            0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=12,
+            verticalalignment='top',
+            bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.5),
+        )
+
+        ax.set_ylabel('H Value', fontsize=14)
+        title_str = 'Manifold H Over Laps Heatmapped by Acceleration'
+        if lap_ma_window is not None:
+            title_str += f' (MA: {lap_ma_window} lap{"s" if lap_ma_window != 1 else ""})'
+        if session_idx is not None and session is not None:
+            title_str += f'\nSession {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
+        if tag:
+            title_str += f', Tag {tag}'
+        ax.set_title(title_str, fontsize=16)
+        ax.legend(loc='upper right')
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.set_xlim(lap_trimmed.min(), lap_trimmed.max())
+        y_vals = [decode_H_trimmed]
+        if est_H_trimmed is not None:
+            y_vals.append(est_H_trimmed)
+        y_stack = np.concatenate(y_vals)
+        y_min, y_max = np.nanmin(y_stack), np.nanmax(y_stack)
+        y_pad = 0.05 * (y_max - y_min + 1e-6)
+        ax.set_ylim(y_min - y_pad, y_max + y_pad)
+
+        # Bottom: acceleration over lap number (same colormap)
+        accel_points = np.array([lap_trimmed, accel_trimmed]).T.reshape(-1, 1, 2)
+        accel_segments = np.concatenate([accel_points[:-1], accel_points[1:]], axis=1)
+        lc_accel = LineCollection(
+            accel_segments,
+            colors=cmap(norm(accel_trimmed[:-1])),
+            linewidths=1.5,
+            zorder=2,
+        )
+        ax_accel.add_collection(lc_accel)
+        ax_accel.axhline(0.0, color='0.4', linestyle='--', linewidth=1.0, zorder=1)
+        ax_accel.set_xlabel('Lap Number', fontsize=14)
+        ax_accel.set_ylabel('Acceleration', fontsize=14)
+        ax_accel.grid(True, linestyle='--', alpha=0.5)
+        ax_accel.set_xlim(lap_trimmed.min(), lap_trimmed.max())
+        ax_accel.set_ylim(-accel_abs_max * 1.05, accel_abs_max * 1.05)
+        fig.tight_layout()
+
+        if save_path:
+            dir_components = [save_path, 'h_plots']
+            if session_idx is not None:
+                dir_components.append(f'session_{session_idx}')
+            dir_path = os.path.join(*dir_components)
+            os.makedirs(dir_path, exist_ok=True)
+
+            filename = f"h_over_laps_accel_heatmap_{tag}.svg" if tag else "h_over_laps_accel_heatmap.svg"
+            full_path = os.path.join(dir_path, filename)
+            save_svg(full_path, fig=fig, bbox_inches='tight')
+            if pdf:
+                pdf.savefig(fig)
+            plt.close(fig)
+            print(f"[INFO] Saved Hs-over-laps acceleration heatmap to {full_path}")
+        else:
+            plt.show()
+            plt.close(fig)
 
     @staticmethod
     def plot_Hs_over_laps_interactive(
@@ -1224,7 +1893,7 @@ class CEBRAUtils:
             x=lap_trimmed,
             y=est_H_trimmed,
             mode='lines+markers',
-            name='est_H Value',
+            name='Fourier method',
             line=dict(color='blue'),
             marker=dict(symbol='circle', size=8)
         )
@@ -1233,7 +1902,7 @@ class CEBRAUtils:
                 x=lap_trimmed,
                 y=decode_H_trimmed,
                 mode='markers+lines',
-                name='decode_H Value',
+                name='Manifold method',
                 line=dict(color='red', dash='dash'),
                 marker=dict(
                     symbol='x',
@@ -1250,7 +1919,7 @@ class CEBRAUtils:
                 x=lap_trimmed,
                 y=decode_H_trimmed,
                 mode='markers+lines',
-                name='decode_H Value',
+                name='Manifold method',
                 line=dict(color='red', dash='dash'),
                 marker=dict(
                     symbol='x', size=8)
@@ -1259,18 +1928,18 @@ class CEBRAUtils:
         data = [trace_est_H, trace_decode_H]
         
         # Prepare annotation text
-        annotation_text = f'Avg est_H: {avg_est_H:.2f}<br>Avg decode_H: {avg_decode_H:.2f}'
+        annotation_text = f'Avg Fourier method H: {avg_est_H:.2f}<br>Avg Manifold method H: {avg_decode_H:.2f}'
         if SI_score is not None:
             annotation_text += f'<br>SI Score: {SI_score:.2f}'
         if decode_err is not None:
-            annotation_text += f'<br>Decode Error: {decode_err:.2f}'
+            annotation_text += f'<br>Avg |Fourier - Manifold|: {decode_err:.2f}'
         if mean_diff is not None:
-            annotation_text += f'<br>Mean Diff: {mean_diff:.2f}'
+            annotation_text += f'<br>Avg |Fourier - Manifold|: {mean_diff:.2f}'
         if std_diff is not None:
             annotation_text += f'<br>Std Diff: {std_diff:.2f}'
         
         # Define the base title text with session information if available
-        base_title = 'est_H and decode_H Values Over Laps'
+        base_title = 'Fourier method vs Manifold method Over Laps'
         if session_idx is not None and session is not None:
             base_title += f'<br>Session {session_idx}: Rat {session.rat}, Day {session.day}, Epoch {session.epoch}'
             if tag is not None:
@@ -1338,100 +2007,90 @@ class CEBRAUtils:
         pdf=None,
     ):
         """
-        Plots the moving averages of estimated hippocampal gain (est_H) against decoded gain (decode_H),
-        with colors representing a behavioral variable (e.g., velocity).
-        
-        Parameters:
-        - est_H (np.ndarray): Array of estimated gain values.
-        - decode_H (np.ndarray): Array of decoded gain values.
-        - behav_var (np.ndarray): Array of behavioral variable values (e.g., velocity).
-        - session_idx (int, optional): Session index for labeling purposes.
-        - session (object, optional): Session object containing metadata. Expected to have attributes 'rat', 'day', and 'epoch'.
-        - save_path (str, optional): Path to save the plot. If None, the plot is displayed.
-        - tag (str, optional): Additional tag for the plot title and filename.
-        - window_size (int, optional): Number of time steps to average over for smoothing (default=5).
-        
-        Returns:
-        - None
+        Plots moving averages of Fourier-method H (est_H) against Manifold-method H (decode_H).
+        Optionally colors lines by a behavioral variable (e.g., velocity).
         """
-        
-        # Validate input arrays
-        if est_H is None or decode_H is None or behav_var is None:
-            raise ValueError("est_H, decode_H, and behav_var must all be provided.")
-        
-        # Validate window_size
+        if est_H is None or decode_H is None:
+            raise ValueError("est_H and decode_H must both be provided.")
+
+        if behav_var is not None and behav_var_name is None:
+            raise ValueError("behav_var_name must be provided if behav_var is used.")
+
         if not isinstance(window_size, int) or window_size <= 0:
             raise ValueError("window_size must be a positive integer.")
-        
-        # Find the overlapping range of indices
-        min_length = min(len(est_H), len(decode_H), len(behav_var))
-        
-        # Trim est_H, decode_H, and behav_var to the overlapping range
-        est_gain_trimmed = est_H[:min_length]
-        decode_gain_trimmed = decode_H[:min_length]
-        behav_var_trimmed = behav_var[:min_length]
-        times = np.arange(min_length)  # Time is just the index
-        
-        # Check if the trimmed arrays are long enough for the moving average
+
+        min_length = min(len(est_H), len(decode_H))
+        if behav_var is not None:
+            min_length = min(min_length, len(behav_var))
+
+        est_gain_trimmed = np.asarray(est_H[:min_length])
+        decode_gain_trimmed = np.asarray(decode_H[:min_length])
+        times = np.arange(min_length)
+
         if min_length < window_size:
             raise ValueError(f"Not enough data points ({min_length}) for the specified window_size ({window_size}).")
-        
-        # Compute moving averages using numpy's convolution
+
         kernel = np.ones(window_size) / window_size
         avg_est_gain = np.convolve(est_gain_trimmed, kernel, mode='valid')
         avg_decode_gain = np.convolve(decode_gain_trimmed, kernel, mode='valid')
-        avg_behav_var = np.convolve(behav_var_trimmed, kernel, mode='valid')
-        
-        # Adjust the time axis for 'valid' mode convolution
-        # This centers the window; alternatively, you can adjust as needed
         adjusted_times = times[(window_size - 1)//2 : -(window_size//2)] if window_size > 1 else times
-        
-        # Calculate the overall averages of the moving averages
+
         overall_avg_est_gain = np.mean(avg_est_gain)
         overall_avg_decode_gain = np.mean(avg_decode_gain)
-        overall_avg_behav_var = np.mean(avg_behav_var)
-        
-        # Normalize the behavioral variable for color mapping
-        norm = mcolors.Normalize(vmin=np.min(avg_behav_var), vmax=np.max(avg_behav_var))
-        cmap = plt.get_cmap('viridis')  # Choose a suitable colormap
-        
-        # Create a ScalarMappable for the colorbar
-        sm = ScalarMappable(cmap=cmap, norm=norm)
-        sm.set_array([])  # Only needed for older versions of matplotlib
-        
-        # Create the plot using object-oriented Matplotlib
+        mean_ma_H_diff = np.mean(np.abs(avg_est_gain - avg_decode_gain))
+
         fig, ax = plt.subplots(figsize=(12, 6))
-        
-        # Create LineCollection for est_H
-        points_est = np.array([adjusted_times, avg_est_gain]).T.reshape(-1, 1, 2)
-        segments_est = np.concatenate([points_est[:-1], points_est[1:]], axis=1)
-        lc_est = LineCollection(segments_est, colors=cmap(norm(avg_behav_var[:-1])), linewidths=2, label=f'Estimated Gain (MA window={window_size})')
-        
-        # Create LineCollection for decode_H
-        points_decode = np.array([adjusted_times, avg_decode_gain]).T.reshape(-1, 1, 2)
-        segments_decode = np.concatenate([points_decode[:-1], points_decode[1:]], axis=1)
-        lc_decode = LineCollection(segments_decode, colors=cmap(norm(avg_behav_var[:-1])), linewidths=2, label=f'Decoded Gain (MA window={window_size})', alpha=0.7)
-        
-        # Add LineCollections to the Axes
-        ax.add_collection(lc_est)
-        ax.add_collection(lc_decode)
-        
-        # Add dummy plot lines for the legend
-        ax.plot([], [], color='blue', label=f'Estimated Gain (MA window={window_size})')
-        ax.plot([], [], color='red', alpha=0.7, label=f'Decoded Gain (MA window={window_size})')
-        
-        # Add the colorbar to the figure
-        cbar = fig.colorbar(sm, ax=ax)
-        cbar.set_label(f'{behav_var_name}', fontsize=12)
-        
-        # Prepare the text for average values
+
+        if behav_var is not None:
+            behav_var_trimmed = np.asarray(behav_var[:min_length])
+            avg_behav_var = np.convolve(behav_var_trimmed, kernel, mode='valid')
+            overall_avg_behav_var = np.mean(avg_behav_var)
+
+            norm = mcolors.Normalize(vmin=np.min(avg_behav_var), vmax=np.max(avg_behav_var))
+            cmap = plt.get_cmap('viridis')
+            sm = ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+
+            points_est = np.array([adjusted_times, avg_est_gain]).T.reshape(-1, 1, 2)
+            segments_est = np.concatenate([points_est[:-1], points_est[1:]], axis=1)
+            lc_est = LineCollection(
+                segments_est, colors=cmap(norm(avg_behav_var[:-1])), linewidths=2,
+                label=f'Fourier method (MA window={window_size})',
+            )
+
+            points_decode = np.array([adjusted_times, avg_decode_gain]).T.reshape(-1, 1, 2)
+            segments_decode = np.concatenate([points_decode[:-1], points_decode[1:]], axis=1)
+            lc_decode = LineCollection(
+                segments_decode, colors=cmap(norm(avg_behav_var[:-1])), linewidths=2,
+                label=f'Manifold method (MA window={window_size})', alpha=0.7,
+            )
+
+            ax.add_collection(lc_est)
+            ax.add_collection(lc_decode)
+            ax.plot([], [], color='blue', label=f'Fourier method (MA window={window_size})')
+            ax.plot([], [], color='red', alpha=0.7, label=f'Manifold method (MA window={window_size})')
+
+            cbar = fig.colorbar(sm, ax=ax)
+            cbar.set_label(behav_var_name, fontsize=12)
+        else:
+            ax.plot(
+                adjusted_times, avg_est_gain, color='blue',
+                label=f'Fourier method (MA window={window_size})',
+            )
+            ax.plot(
+                adjusted_times, avg_decode_gain, color='red', alpha=0.7,
+                label=f'Manifold method (MA window={window_size})',
+            )
+
         avg_text = (
-            f'Overall Avg Estimated Gain: {overall_avg_est_gain:.2f}\n'
-            f'Overall Avg Decoded Gain: {overall_avg_decode_gain:.2f}\n'
-            f'Overall Avg Behavioral Var: {overall_avg_behav_var:.2f}\n'
-            f'SI Score: {SI_score:.2f}\n'
-            f'Avg_decode_err: {decode_err:.2f}'
+            f'Overall Avg Fourier method H: {overall_avg_est_gain:.2f}\n'
+            f'Overall Avg Manifold method H: {overall_avg_decode_gain:.2f}\n'
         )
+        if behav_var is not None:
+            avg_text += f'Overall Avg Behavioral Var: {overall_avg_behav_var:.2f}\n'
+        if SI_score is not None:
+            avg_text += f'SI Score: {SI_score:.2f}\n'
+        avg_text += f'Avg |Fourier - Manifold|: {mean_ma_H_diff:.2f}'
         
         # Add text annotation in the top-left corner
         ax.text(
@@ -1442,7 +2101,10 @@ class CEBRAUtils:
         # Setting labels and title
         ax.set_xlabel('Time (s)', fontsize=14)
         ax.set_ylabel('Gain', fontsize=14)
-        title = 'FT Gain vs Spline Decoded Gain (Moving Averages) Colored by Behavioral Variable'
+        if behav_var is not None:
+            title = 'Fourier method vs Manifold method (Moving Averages) Colored by Behavioral Variable'
+        else:
+            title = 'Fourier method vs Manifold method (Moving Averages)'
         
         # Adding session information to the title if available
         if session_idx is not None and session is not None:
@@ -1475,14 +2137,15 @@ class CEBRAUtils:
             os.makedirs(save_dir, exist_ok=True)
             
             # Define the filename with tag if provided
-            filename = f"h_est_vs_decode_ma_window{window_size}_{tag}.png" if tag else f"h_est_vs_decode_ma_window{window_size}.png"
+            filename = f"h_est_vs_decode_ma_window{window_size}_{tag}.svg" if tag else f"h_est_vs_decode_ma_window{window_size}.svg"
             full_save_path = os.path.join(save_dir, filename)
             
             # Save the figure
-            fig.savefig(full_save_path, dpi=300)
-            pdf.savefig()
-            plt.close(fig)  # Close the figure to free memory
-            print(f"Saved plot to {full_save_path}")
+            save_svg(full_save_path, fig=fig, bbox_inches='tight')
+            if pdf is not None:
+                pdf.savefig(fig)
+            plt.close(fig)
+            print(f"[INFO] Saved H moving-average plot to {full_save_path}")
         else:
             plt.show()
 
@@ -1542,8 +2205,8 @@ class CEBRAUtils:
 
         if save_path and behav_var_name:
             os.makedirs(save_path, exist_ok=True)
-            file_path = os.path.join(save_path, f"{behav_var_name}.png")
-            plt.savefig(file_path)
+            file_path = os.path.join(save_path, f"{behav_var_name}.svg")
+            save_svg(file_path, bbox_inches='tight')
         plt.show()
         plt.close()
 
@@ -1680,7 +2343,7 @@ class CEBRAAnalysis:
     using the utility methods from CEBRAUtils.
     """
 
-    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None,trial_type='default',data_source="",temperature_list=None):
+    def __init__(self, session_choose=True, max_num_reruns=1, run_persistent_homology=False,include_land_off=False,whole_trial_embeddings=False,save_folder=None,trial_type='default',data_source="",temperature_list=None,ph_source='cebra',ph_isomap_n_neighbors=5,ph_isomap_n_components=10,cebra_output_dimension=3,plot_embedding_figures=True,run_isomap_analysis=False,isomap_n_neighbors=5,isomap_n_components=None,outlier_interp_mode='linear'):
         """
         Loads data, sets up configuration, etc.
         """
@@ -1693,9 +2356,9 @@ class CEBRAAnalysis:
             self.optic_flow_sessions = [35]
         else:
             self.landmark_num_trials = 0
-            self.landmark_control_point = 25
-            self.optic_flow_num_trials = 1
-            self.optic_flow_control_point = 37
+            self.landmark_control_point = 41
+            self.optic_flow_num_trials = 2
+            self.optic_flow_control_point = 41
 
         self.run_persistent_homology = run_persistent_homology
         self.max_num_reruns = max_num_reruns
@@ -1705,6 +2368,25 @@ class CEBRAAnalysis:
         self.trial_type = trial_type
         self.data_source = data_source
         self.temperature_list = temperature_list
+        # ph_source: 'cebra' = PH on CEBRA embeddings (default);
+        #            'isomap' = PH on Isomap-reduced sqrt spike counts (Chaudhuri 2019 style)
+        self.ph_source = ph_source
+        self.ph_isomap_n_neighbors = ph_isomap_n_neighbors
+        self.ph_isomap_n_components = ph_isomap_n_components
+        self.cebra_output_dimension = cebra_output_dimension
+        self.plot_embedding_figures = plot_embedding_figures
+        self.run_isomap_analysis = run_isomap_analysis
+        self.isomap_n_neighbors = isomap_n_neighbors
+        self.isomap_n_components = (
+            isomap_n_components if isomap_n_components is not None else cebra_output_dimension
+        )
+        if self.cebra_output_dimension < 1:
+            raise ValueError("cebra_output_dimension must be >= 1")
+        if self.isomap_n_components < 1:
+            raise ValueError("isomap_n_components must be >= 1")
+        if outlier_interp_mode not in ('linear', 'spline'):
+            raise ValueError("outlier_interp_mode must be 'linear' or 'spline'")
+        self.outlier_interp_mode = outlier_interp_mode
 
         self.sessions_data = []
 
@@ -1811,6 +2493,7 @@ class CEBRAAnalysis:
             neural_data_land_on=np.nan,
             neural_data_land_off=np.nan,
             embeddings_3d=np.nan,
+            embeddings_hd=np.nan,
             high_vel_mask=np.nan,
             H0_value=np.nan,
             H1_value=np.nan,
@@ -1845,7 +2528,8 @@ class CEBRAAnalysis:
             SI_score_hipp=np.nan,
             SI_score_true=np.nan,
             mean_H_difference=np.nan,
-            std_H_difference=np.nan
+            std_H_difference=np.nan,
+            embedding_method='CEBRA',
         )
         self.sessions_data.append(session_data)
 
@@ -1856,16 +2540,137 @@ class CEBRAAnalysis:
         where each session is a separate struct.
         """
         # Convert each SessionData instance to a dictionary
-        sessions_dict_list = [asdict(session) for session in self.sessions_data]
-        
+        sessions_dict_list = [
+            self._sanitize_for_matlab(asdict(session))
+            for session in self.sessions_data
+        ]
 
         data_dict = {
             'sessions': sessions_dict_list,
             'specifier': "full_trial_included" if self.include_land_off else "only_vis_cue_included",
         }
-        
+
         return data_dict
 
+    @staticmethod
+    def _sanitize_for_matlab(obj):
+        """Replace None with np.nan so scipy.io.savemat can serialize nested structs."""
+        if obj is None:
+            return np.nan
+        if isinstance(obj, dict):
+            return {key: CEBRAAnalysis._sanitize_for_matlab(value) for key, value in obj.items()}
+        if isinstance(obj, list):
+            return [CEBRAAnalysis._sanitize_for_matlab(value) for value in obj]
+        return obj
+
+
+    def _apply_cebra_for_trial(
+        self,
+        output_dimension,
+        temperature,
+        neural_data_fit,
+        neural_data_full_trial,
+        neural_data_land_on,
+        neural_data_low_vel,
+    ):
+        """Apply CEBRA for the configured trial type and embedding dimension."""
+        if self.include_land_off and self.whole_trial_embeddings:
+            return CEBRAUtils.apply_cebra(
+                neural_data_fit=neural_data_fit,
+                neural_data_embeddings=neural_data_fit,
+                neural_data_low_vel=neural_data_low_vel,
+                output_dimension=output_dimension,
+                temperature=temperature,
+            )
+        if not self.include_land_off and self.whole_trial_embeddings:
+            return CEBRAUtils.apply_cebra(
+                neural_data_fit=neural_data_land_on,
+                neural_data_embeddings=neural_data_full_trial,
+                neural_data_low_vel=neural_data_low_vel,
+                output_dimension=output_dimension,
+                temperature=temperature,
+            )
+        return CEBRAUtils.apply_cebra(
+            neural_data_fit=neural_data_land_on,
+            neural_data_embeddings=neural_data_land_on,
+            neural_data_low_vel=neural_data_low_vel,
+            output_dimension=output_dimension,
+            temperature=temperature,
+        )
+
+    def _apply_isomap_for_trial(
+        self,
+        n_components,
+        neural_data_fit,
+        neural_data_full_trial,
+        neural_data_land_on,
+        neural_data_low_vel,
+    ):
+        """Apply Isomap for the configured trial type and target dimension."""
+        if self.include_land_off and self.whole_trial_embeddings:
+            return CEBRAUtils.apply_isomap(
+                neural_data_fit=neural_data_fit,
+                neural_data_embeddings=neural_data_fit,
+                neural_data_low_vel=neural_data_low_vel,
+                n_neighbors=self.isomap_n_neighbors,
+                n_components=n_components,
+            )
+        if not self.include_land_off and self.whole_trial_embeddings:
+            return CEBRAUtils.apply_isomap(
+                neural_data_fit=neural_data_land_on,
+                neural_data_embeddings=neural_data_full_trial,
+                neural_data_low_vel=neural_data_low_vel,
+                n_neighbors=self.isomap_n_neighbors,
+                n_components=n_components,
+            )
+        return CEBRAUtils.apply_isomap(
+            neural_data_fit=neural_data_land_on,
+            neural_data_embeddings=neural_data_land_on,
+            neural_data_low_vel=neural_data_low_vel,
+            n_neighbors=self.isomap_n_neighbors,
+            n_components=n_components,
+        )
+
+    def _get_method_paths(self, session_base_path, method_name):
+        """Per-reducer output paths, e.g. .../3d_Animations/full_trial_2/CEBRA/."""
+        trial_type = self.trial_type
+        return {
+            'si_plots': os.path.join(session_base_path, 'SI_Plots', trial_type, method_name),
+            'anim': os.path.join(session_base_path, '3d_Animations', trial_type, method_name),
+            'spectrogram': os.path.join(session_base_path, 'Spatial_Spectrograms', trial_type, method_name),
+            'param': os.path.join(session_base_path, 'Param_Plots', trial_type, method_name),
+            'h_plots': os.path.join(session_base_path, 'H_Plots', trial_type, method_name),
+            'pers_hom': os.path.join(session_base_path, 'Pers_Hom_Plots', trial_type, method_name),
+        }
+
+    def _apply_reducer_for_trial(
+        self,
+        method_name,
+        output_dimension,
+        temperature,
+        neural_data_fit,
+        neural_data_full_trial,
+        neural_data_land_on,
+        neural_data_low_vel,
+    ):
+        if method_name == 'CEBRA':
+            return self._apply_cebra_for_trial(
+                output_dimension=output_dimension,
+                temperature=temperature,
+                neural_data_fit=neural_data_fit,
+                neural_data_full_trial=neural_data_full_trial,
+                neural_data_land_on=neural_data_land_on,
+                neural_data_low_vel=neural_data_low_vel,
+            )
+        if method_name == 'ISOMAP':
+            return self._apply_isomap_for_trial(
+                n_components=output_dimension,
+                neural_data_fit=neural_data_fit,
+                neural_data_full_trial=neural_data_full_trial,
+                neural_data_land_on=neural_data_land_on,
+                neural_data_low_vel=neural_data_low_vel,
+            )
+        raise ValueError(f"Unknown embedding method {method_name!r}")
 
     def run_analysis(self):
         """
@@ -1879,6 +2684,17 @@ class CEBRAAnalysis:
         from matplotlib.backends.backend_pdf import PdfPages
         from scipy.signal import savgol_filter
         from scipy.io import savemat
+
+        if self.cebra_output_dimension > 3:
+            print(
+                f"[INFO] CEBRA dual-branch mode: dim={self.cebra_output_dimension} "
+                f"for PH, spline, decoding, and H analysis; dim=3 only for embedding plots"
+            )
+        if self.run_isomap_analysis:
+            print(
+                f"[INFO] ISOMAP parallel pipeline enabled (dim={self.isomap_n_components}); "
+                f"outputs saved under CEBRA/ and ISOMAP/ subfolders"
+            )
 
         i__unclustered_trials = 0
         for expt_name, expt, control_point, num_trials in self.expts:
@@ -1914,18 +2730,6 @@ class CEBRAAnalysis:
                         f'session_{session_idx}'
                         )   
                         os.makedirs(session_base_path, exist_ok=True)
-                    
-                        SI_plots_path = os.path.join(session_base_path, 'SI_Plots',self.trial_type)
-                        anim_save_path = os.path.join(session_base_path, '3d_Animations',self.trial_type)
-                        spectrogram_path = os.path.join(session_base_path, 'Spatial_Spectrograms',self.trial_type)
-                        param_plot_path = os.path.join(session_base_path, 'Param_Plots',self.trial_type)
-                        H_plot_path = os.path.join(session_base_path, 'H_Plots',self.trial_type)
-                        pers_hom_path = os.path.join(session_base_path, 'Pers_Hom_Plots',self.trial_type)
-
-
-                        paths_to_create = [SI_plots_path, anim_save_path, spectrogram_path, param_plot_path, H_plot_path, pers_hom_path]
-                        for path in paths_to_create:
-                            os.makedirs(path, exist_ok=True)
 
                         ros_data = session.rosdata
                         start_time = ros_data.startTs
@@ -2129,198 +2933,479 @@ class CEBRAAnalysis:
 
                         print(f"Shape of low vel neural data array: {neural_data_low_vel.shape}")
 
-                        # For reruns if SI < threshold
-                        pdf_filename = os.path.join(session_base_path, f'session_{session_idx}.pdf')
-                        os.makedirs(os.path.dirname(pdf_filename), exist_ok=True)
-                        pdf = PdfPages(pdf_filename)
+                        embedding_methods = ['CEBRA']
+                        if self.run_isomap_analysis:
+                            embedding_methods.append('ISOMAP')
 
-                        best_embeddings_3d = None
-                        best_SI_score_hipp = -999
+                        binned_est_gain_session = binned_est_gain.copy()
+                        binned_hipp_angle_session = binned_hipp_angle.copy()
+                        binned_true_angle_session = binned_true_angle.copy()
+                        binned_vel_session = binned_vel.copy()
 
-                        # Attempt multiple runs if SI < some threshold
-                        skip_session = False
-                        for temp in self.temperature_list:
-                            output_dimension = 3
-                            rerun_count = 0
-                            while rerun_count < self.max_num_reruns:
-                                if self.include_land_off and self.whole_trial_embeddings: # If you want to include the data points after the landmarks/optic flow turned off or not
-                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
-                                        neural_data_fit=neural_data_fit,
-                                        neural_data_embeddings=neural_data_fit,
-                                        neural_data_low_vel=neural_data_low_vel,
-                                        output_dimension=output_dimension,
-                                        temperature=temp
-                                    )
-                                elif not self.include_land_off and self.whole_trial_embeddings:
-                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
-                                        neural_data_fit=neural_data_land_on,
-                                        neural_data_embeddings=neural_data_full_trial,
-                                        neural_data_low_vel=neural_data_low_vel,
-                                        output_dimension=output_dimension,
-                                        temperature=temp
-                                    )
-                                elif not self.include_land_off and not self.whole_trial_embeddings:
-                                    embeddings_high_dim, embeddings_low_vel = CEBRAUtils.apply_cebra(
-                                            neural_data_fit=neural_data_land_on,
-                                            neural_data_embeddings=neural_data_land_on,
+                        for method_name in embedding_methods:
+                            print(f"\n[INFO] Running {method_name} embedding pipeline for session {session_idx}")
+                            binned_est_gain = binned_est_gain_session.copy()
+                            binned_hipp_angle = binned_hipp_angle_session.copy()
+                            binned_true_angle = binned_true_angle_session.copy()
+                            binned_vel = binned_vel_session.copy()
+
+                            method_paths = self._get_method_paths(session_base_path, method_name)
+                            SI_plots_path = method_paths['si_plots']
+                            anim_save_path = method_paths['anim']
+                            spectrogram_path = method_paths['spectrogram']
+                            param_plot_path = method_paths['param']
+                            H_plot_path = method_paths['h_plots']
+                            pers_hom_path = method_paths['pers_hom']
+                            for path in method_paths.values():
+                                os.makedirs(path, exist_ok=True)
+
+                            pdf_filename = os.path.join(
+                                session_base_path, f'session_{session_idx}_{method_name}.pdf'
+                            )
+                            os.makedirs(os.path.dirname(pdf_filename), exist_ok=True)
+                            pdf = PdfPages(pdf_filename)
+
+                            analysis_output_dim = (
+                                self.cebra_output_dimension
+                                if method_name == 'CEBRA'
+                                else self.isomap_n_components
+                            )
+                            use_hd_branch = analysis_output_dim > 3
+                            method_temperature_list = (
+                                self.temperature_list if method_name == 'CEBRA' else [None]
+                            )
+
+                            best_embeddings_analysis = None
+                            best_embeddings_3d_plot = None
+                            best_embeddings_low_vel = None
+                            best_SI_score_hipp = -999
+
+                            skip_session = False
+                            for temp in method_temperature_list:
+                                rerun_count = 0
+                                while rerun_count < self.max_num_reruns:
+                                    embeddings_low_vel = None
+                                    embeddings_3d_plot = None
+
+                                    # Shared SPUD params used for manifold-aware gap filling
+                                    _gap_spud_params = {
+                                        'dalpha': 0.005,
+                                        'knot_order': 'nearest',
+                                        'penalty_type': 'curvature',
+                                        'nKnots': 15,
+                                        'curvature_coeff': 100,
+                                        'len_coeff': 2,
+                                        'density_coeff': 2,
+                                        'delta': 0.1,
+                                    }
+                                    _use_spline_expand = (self.outlier_interp_mode == 'spline')
+                                    _gap_mask = ~high_vel_mask   # low-vel bins that need filling
+
+                                    if use_hd_branch:
+                                        embeddings_high_vel_hd, _ = self._apply_reducer_for_trial(
+                                            method_name=method_name,
+                                            output_dimension=analysis_output_dim,
+                                            temperature=temp,
+                                            neural_data_fit=neural_data_fit,
+                                            neural_data_full_trial=neural_data_full_trial,
+                                            neural_data_land_on=neural_data_land_on,
                                             neural_data_low_vel=neural_data_low_vel,
-                                            output_dimension=output_dimension,
-                                            temperature=temp
-                                    )
+                                        )
 
-                                embeddings_3d = embeddings_high_dim.copy()
+                                        embeddings_high_vel_3d, embeddings_low_vel = self._apply_reducer_for_trial(
+                                            method_name=method_name,
+                                            output_dimension=3,
+                                            temperature=temp,
+                                            neural_data_fit=neural_data_fit,
+                                            neural_data_full_trial=neural_data_full_trial,
+                                            neural_data_land_on=neural_data_land_on,
+                                            neural_data_low_vel=neural_data_low_vel,
+                                        )
 
+                                        if _use_spline_expand:
+                                            _emb_hd_nan = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_hd, neural_data_full_trial,
+                                                high_vel_mask, interp=False,
+                                            )
+                                            _emb_3d_nan = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_3d, neural_data_full_trial,
+                                                high_vel_mask, interp=False,
+                                            )
+                                            print(
+                                                f"[INFO] Gap-fill: fitting preliminary SPUD on "
+                                                f"{embeddings_high_vel_3d.shape[0]} high-vel points …"
+                                            )
+                                            _gap_curve, _, _gap_tt = CEBRAUtils.fit_spud_to_cebra(
+                                                embeddings=embeddings_high_vel_3d,
+                                                ref_angle=None,
+                                                session_idx=session_idx,
+                                                session=session,
+                                                results_save_path=None,
+                                                fit_params=_gap_spud_params,
+                                                dimension_3d=None,
+                                                verbose=False,
+                                            )
+                                            if _gap_curve is None:
+                                                print(
+                                                    "[WARNING] Gap-fill SPUD fit failed — "
+                                                    "falling back to linear interp for low-vel gaps."
+                                                )
+                                                embeddings_analysis = CEBRAUtils.linear_interpolate_nans_2d(_emb_hd_nan)
+                                                embeddings_3d_plot = CEBRAUtils.linear_interpolate_nans_2d(_emb_3d_nan)
+                                            else:
+                                                # HD: interpolate_outliers_on_spline auto-falls back
+                                                # to linear (dim mismatch), which is correct for HD.
+                                                embeddings_analysis, _ = CEBRAUtils.interpolate_outliers_on_spline(
+                                                    embeddings=_emb_hd_nan,
+                                                    outlier_mask=_gap_mask,
+                                                    principal_curve=_gap_curve,
+                                                    curve_params_tt=_gap_tt,
+                                                    behavioral_arrays=None,
+                                                )
+                                                embeddings_3d_plot, _ = CEBRAUtils.interpolate_outliers_on_spline(
+                                                    embeddings=_emb_3d_nan,
+                                                    outlier_mask=_gap_mask,
+                                                    principal_curve=_gap_curve,
+                                                    curve_params_tt=_gap_tt,
+                                                    behavioral_arrays=None,
+                                                )
+                                                print("[INFO] Gap-fill: spline-based low-vel fill complete (HD branch).")
+                                        else:
+                                            embeddings_analysis = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_hd,
+                                                neural_data_full_trial,
+                                                high_vel_mask,
+                                            )
+                                            embeddings_3d_plot = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_3d,
+                                                neural_data_full_trial,
+                                                high_vel_mask,
+                                            )
+                                    else:
+                                        embeddings_high_vel_3d, embeddings_low_vel = self._apply_reducer_for_trial(
+                                            method_name=method_name,
+                                            output_dimension=3,
+                                            temperature=temp,
+                                            neural_data_fit=neural_data_fit,
+                                            neural_data_full_trial=neural_data_full_trial,
+                                            neural_data_land_on=neural_data_land_on,
+                                            neural_data_low_vel=neural_data_low_vel,
+                                        )
 
-                                full_embeddings = np.empty((neural_data_full_trial.shape[0],embeddings_3d.shape[1]))
-                                full_embeddings[:] = np.nan
-                                full_embeddings[high_vel_mask,:] = embeddings_3d
-                                embeddings_3d_high_vel = full_embeddings
+                                        if _use_spline_expand:
+                                            _emb_3d_nan = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_3d, neural_data_full_trial,
+                                                high_vel_mask, interp=False,
+                                            )
+                                            print(
+                                                f"[INFO] Gap-fill: fitting preliminary SPUD on "
+                                                f"{embeddings_high_vel_3d.shape[0]} high-vel points …"
+                                            )
+                                            _gap_curve, _, _gap_tt = CEBRAUtils.fit_spud_to_cebra(
+                                                embeddings=embeddings_high_vel_3d,
+                                                ref_angle=None,
+                                                session_idx=session_idx,
+                                                session=session,
+                                                results_save_path=None,
+                                                fit_params=_gap_spud_params,
+                                                dimension_3d=None,
+                                                verbose=False,
+                                            )
+                                            if _gap_curve is None:
+                                                print(
+                                                    "[WARNING] Gap-fill SPUD fit failed — "
+                                                    "falling back to linear interp for low-vel gaps."
+                                                )
+                                                embeddings_analysis = CEBRAUtils.linear_interpolate_nans_2d(_emb_3d_nan)
+                                            else:
+                                                embeddings_analysis, _ = CEBRAUtils.interpolate_outliers_on_spline(
+                                                    embeddings=_emb_3d_nan,
+                                                    outlier_mask=_gap_mask,
+                                                    principal_curve=_gap_curve,
+                                                    curve_params_tt=_gap_tt,
+                                                    behavioral_arrays=None,
+                                                )
+                                                print("[INFO] Gap-fill: spline-based low-vel fill complete (3D branch).")
+                                            embeddings_3d_plot = embeddings_analysis
+                                        else:
+                                            embeddings_analysis = CEBRAUtils.expand_embeddings_to_full_trial(
+                                                embeddings_high_vel_3d,
+                                                neural_data_full_trial,
+                                                high_vel_mask,
+                                            )
+                                            embeddings_3d_plot = embeddings_analysis
 
-                                embeddings_3d = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d_high_vel)
+                                    print("shape of embeddings after fitting")
+                                    print(f"  [{method_name}] analysis branch: {embeddings_analysis.shape}")
+                                    if use_hd_branch:
+                                        print(f"  3D plot branch: {embeddings_3d_plot.shape}")
+                                    print("current hip angle shape")
+                                    print(binned_hipp_angle.shape)
+                                    print("embeddings low vel shape")
+                                    print(embeddings_low_vel.shape if embeddings_low_vel is not None else None)
 
+                                    # Align behavioral arrays to embedding length
+                                    binned_hipp_angle = binned_hipp_angle[:embeddings_analysis.shape[0]]
+                                    binned_true_angle = binned_true_angle[:embeddings_analysis.shape[0]]
+                                    binned_est_gain = binned_est_gain[:embeddings_analysis.shape[0]]
+                                    binned_vel = binned_vel[:embeddings_analysis.shape[0]]
 
-                                print("shape of embeddings after fitting")
-                                print(embeddings_3d.shape)
-                                print("current hip angle shape")
-                                print(binned_hipp_angle.shape)
-                                print("embeddings low vel shape")
-                                print(embeddings_low_vel.shape)
+                                    if self.rm_outliers:
+                                        inlier_mask = CEBRAUtils.nt_TDA_mask(
+                                            embeddings_analysis,
+                                            pct_distance=1,
+                                            pct_neighbors=65,
+                                            pct_dist=70,
+                                            verbose=True,
+                                        )
+                                        outlier_mask = ~inlier_mask
 
+                                        if self.outlier_interp_mode == 'spline':
+                                            # --- Spline-based interpolation ---
+                                            # 1. Fit SPUD on the inlier points only
+                                            inlier_embeddings = embeddings_analysis[inlier_mask]
+                                            _spud_fit_params = {
+                                                'dalpha': 0.005,
+                                                'knot_order': 'nearest',
+                                                'penalty_type': 'curvature',
+                                                'nKnots': 15,
+                                                'curvature_coeff': 100,
+                                                'len_coeff': 2,
+                                                'density_coeff': 2,
+                                                'delta': 0.1,
+                                            }
+                                            # Use the 3-D branch for the preliminary spline fit
+                                            # (the hi-D branch doesn't have a meaningful ring shape
+                                            # for the KD-tree projection)
+                                            _spline_embeddings = (
+                                                embeddings_3d_plot[inlier_mask]
+                                                if use_hd_branch and embeddings_3d_plot is not None
+                                                else inlier_embeddings
+                                            )
+                                            print(
+                                                f"[INFO] Spline-interp: fitting preliminary SPUD on "
+                                                f"{inlier_embeddings.shape[0]} inlier points …"
+                                            )
+                                            _pre_curve, _pre_curve_pre, _pre_tt = (
+                                                CEBRAUtils.fit_spud_to_cebra(
+                                                    embeddings=_spline_embeddings,
+                                                    ref_angle=None,
+                                                    session_idx=session_idx,
+                                                    session=session,
+                                                    results_save_path=None,
+                                                    fit_params=_spud_fit_params,
+                                                    dimension_3d=None,
+                                                    verbose=False,
+                                                )
+                                            )
 
-                                # Concatenate according to the size of embeddings_3d decided by the type of trial (land_on,land_off, etc.)
-                                binned_hipp_angle = binned_hipp_angle[:embeddings_3d.shape[0]]
-                                binned_true_angle = binned_true_angle[:embeddings_3d.shape[0]]
-                                binned_est_gain = binned_est_gain[:embeddings_3d.shape[0]]
-                                binned_vel = binned_vel[:embeddings_3d.shape[0]]
+                                            if _pre_curve is None:
+                                                print(
+                                                    "[WARNING] Preliminary SPUD fit failed — "
+                                                    "falling back to linear interpolation."
+                                                )
+                                                # Linear fallback
+                                                embeddings_analysis[outlier_mask, :] = np.nan
+                                                if embeddings_3d_plot is not None:
+                                                    embeddings_3d_plot[outlier_mask, :] = np.nan
+                                                binned_hipp_angle[outlier_mask] = np.nan
+                                                binned_true_angle[outlier_mask] = np.nan
+                                                binned_est_gain[outlier_mask] = np.nan
+                                                binned_vel[outlier_mask] = np.nan
+                                                embeddings_analysis = CEBRAUtils.linear_interpolate_nans_2d(embeddings_analysis)
+                                                if embeddings_3d_plot is not None:
+                                                    embeddings_3d_plot = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d_plot)
+                                                binned_hipp_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_hipp_angle)
+                                                binned_true_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_true_angle)
+                                                binned_est_gain = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
+                                                binned_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_vel)
+                                            else:
+                                                # 2. Patch embeddings_analysis on the spline
+                                                embeddings_analysis[outlier_mask, :] = np.nan
+                                                (
+                                                    embeddings_analysis,
+                                                    _beh_patched,
+                                                ) = CEBRAUtils.interpolate_outliers_on_spline(
+                                                    embeddings=embeddings_analysis,
+                                                    outlier_mask=outlier_mask,
+                                                    principal_curve=_pre_curve,
+                                                    curve_params_tt=_pre_tt,
+                                                    behavioral_arrays=[
+                                                        binned_hipp_angle,
+                                                        binned_true_angle,
+                                                        binned_est_gain,
+                                                        binned_vel,
+                                                    ],
+                                                )
+                                                binned_hipp_angle = _beh_patched[0]
+                                                binned_true_angle = _beh_patched[1]
+                                                binned_est_gain   = _beh_patched[2]
+                                                binned_vel        = _beh_patched[3]
 
-            
-                                # Outlier removal
-                                if self.rm_outliers:
-                                    # Get full-length boolean mask
-                                    inlier_mask_3d = CEBRAUtils.nt_TDA_mask(embeddings_3d,verbose=False)
-                                    outlier_mask_3d = ~inlier_mask_3d
+                                                # 3. Patch 3-D plot branch on its own preliminary spline
+                                                if use_hd_branch and embeddings_3d_plot is not None:
+                                                    embeddings_3d_plot[outlier_mask, :] = np.nan
+                                                    (
+                                                        embeddings_3d_plot,
+                                                        _,
+                                                    ) = CEBRAUtils.interpolate_outliers_on_spline(
+                                                        embeddings=embeddings_3d_plot,
+                                                        outlier_mask=outlier_mask,
+                                                        principal_curve=_pre_curve,
+                                                        curve_params_tt=_pre_tt,
+                                                        behavioral_arrays=None,
+                                                    )
 
-                                    # Set outliers to NaN 
-                                    embeddings_3d[outlier_mask_3d, :] = np.nan
+                                                print("[INFO] Spline-based outlier interpolation complete.")
 
-                                    # The binned_x arrays correspond 1-to-1 with embeddings_3d
-                                    binned_hipp_angle[outlier_mask_3d] = np.nan
-                                    binned_true_angle[outlier_mask_3d] = np.nan
-                                    binned_est_gain[outlier_mask_3d] = np.nan
-                                    binned_vel[outlier_mask_3d] = np.nan
+                                        else:
+                                            # --- Original linear interpolation ---
+                                            embeddings_analysis[outlier_mask, :] = np.nan
+                                            if embeddings_3d_plot is not None:
+                                                embeddings_3d_plot[outlier_mask, :] = np.nan
 
-                                    # Interpolate so there are no NaNs but the same shape
-                                    embeddings_3d = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d)
-                                    binned_hipp_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_hipp_angle)
-                                    binned_true_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_true_angle)
-                                    binned_est_gain = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
-                                    binned_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_vel)
+                                            binned_hipp_angle[outlier_mask] = np.nan
+                                            binned_true_angle[outlier_mask] = np.nan
+                                            binned_est_gain[outlier_mask] = np.nan
+                                            binned_vel[outlier_mask] = np.nan
 
-                                if embeddings_3d.shape[0] < 201:
-                                    print(f"length of embeddings is: {embeddings_3d.shape[0]}, skipping session {session_idx}")
-                                    skip_session = True
-                                    break
+                                            embeddings_analysis = CEBRAUtils.linear_interpolate_nans_2d(embeddings_analysis)
+                                            if embeddings_3d_plot is not None:
+                                                embeddings_3d_plot = CEBRAUtils.linear_interpolate_nans_2d(embeddings_3d_plot)
+                                            binned_hipp_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_hipp_angle)
+                                            binned_true_angle = CEBRAUtils.linear_interpolate_nans_1d(binned_true_angle)
+                                            binned_est_gain = CEBRAUtils.linear_interpolate_nans_1d(binned_est_gain)
+                                            binned_vel = CEBRAUtils.linear_interpolate_nans_1d(binned_vel)
 
-                                # Run persistent homology
+                                    if embeddings_analysis.shape[0] < 201:
+                                        print(f"length of embeddings is: {embeddings_analysis.shape[0]}, skipping session {session_idx}")
+                                        skip_session = True
+                                        break
 
-                                if(self.run_persistent_homology):
+                                    # Convert angles to radians
+                                    binned_true_angle_rad = np.deg2rad(binned_true_angle)
+                                    binned_hipp_angle_rad = np.deg2rad(binned_hipp_angle)
 
-                                    H0_value, H1_value, betti_0, betti_1 = CEBRAUtils.run_persistent_homology(
-                                        embeddings=embeddings_3d,
+                                    binned_true_angle_rad_unwrap = binned_true_angle_rad
+                                    binned_hipp_angle_rad_unwrap = binned_hipp_angle_rad
+
+                                    binned_true_angle_rad = (binned_true_angle_rad % (2 * np.pi))
+                                    binned_hipp_angle_rad = (binned_hipp_angle_rad % (2 * np.pi))
+
+                                    SI_params = {
+                                        'n_bins': 10,
+                                        'n_neighbors': 15,
+                                        'discrete_label': False,
+                                        'num_shuffles': 10,
+                                        'verbose': False,
+                                    }
+
+                                    SI_score_hipp = CEBRAUtils.compute_SI_and_plot(
+                                        embeddings=embeddings_analysis,
+                                        behav_var=binned_hipp_angle_rad,
+                                        params=SI_params,
+                                        behav_var_name='Hipp_Angle',
+                                        save_dir=SI_plots_path,
                                         session_idx=session_idx,
-                                        session=session,
-                                        results_save_path=session_base_path,
-                                        dimension=3
+                                        dimensions_3=(embeddings_analysis.shape[1] == 3),
+                                        pdf=pdf,
+                                        num_used_clusters=num_used_cluster,
                                     )
-                                else:
-                                    H0_value = -1
-                                    H1_value = -1
-                                    betti_0 = -1
-                                    betti_1 = -1
+                                    if SI_score_hipp > best_SI_score_hipp:
+                                        best_SI_score_hipp = SI_score_hipp
+                                        best_embeddings_analysis = embeddings_analysis.copy()
+                                        best_embeddings_3d_plot = (
+                                            embeddings_3d_plot.copy()
+                                            if embeddings_3d_plot is not None
+                                            else None
+                                        )
+                                        best_embeddings_low_vel = (
+                                            embeddings_low_vel.copy()
+                                            if embeddings_low_vel is not None
+                                            else None
+                                        )
 
-
-                                # Convert angles to radians
-                                binned_true_angle_rad = np.deg2rad(binned_true_angle)
-                                binned_hipp_angle_rad = np.deg2rad(binned_hipp_angle)
-
-                                binned_true_angle_rad_unwrap = binned_true_angle_rad
-                                binned_hipp_angle_rad_unwrap = binned_hipp_angle_rad
-
-                                binned_true_angle_rad = (binned_true_angle_rad 
-                                                        % (2 * np.pi))
-                                binned_hipp_angle_rad = (binned_hipp_angle_rad 
-                                                        % (2 * np.pi))
-                        
-
-                                # Compute SI on 3D embeddings with hippocampal angle
-                                SI_params = {
-                                    'n_bins': 10,
-                                    'n_neighbors': 15,
-                                    'discrete_label': False,
-                                    'num_shuffles': 10,
-                                    'verbose': False,
-                                }
-                                
-
-                                SI_score_hipp = CEBRAUtils.compute_SI_and_plot(
-                                    embeddings=embeddings_3d,
-                                    behav_var=binned_hipp_angle_rad,
-                                    params=SI_params,
-                                    behav_var_name='Hipp_Angle',
-                                    save_dir=SI_plots_path,
-                                    session_idx=session_idx,
-                                    dimensions_3=True,
-                                    pdf=pdf,
-                                    num_used_clusters=num_used_cluster
-                                )
-                                if SI_score_hipp > best_SI_score_hipp:
-                                    best_SI_score_hipp = SI_score_hipp
-                                    best_embeddings_3d = embeddings_3d.copy()
-
-                                if SI_score_hipp >= 0.8:
-                                    break
-                                elif SI_score_hipp < 0.8:
+                                    if SI_score_hipp >= 0.8:
+                                        break
                                     print(f"[INFO] SI_score_hipp is {SI_score_hipp}. Retrying embedding.")
                                     rerun_count += 1
 
                             # If we tried max_num_reruns times, keep the best anyway
 
                             if skip_session:
-                                print("[INFO] not enough embedding points "
-                                        "Skipping the entire session and writing NaNs.")
-                                print(session_idx)
-                                print(session)
-                                self.append_nan_values(session_idx,session)
-
-                                # Continue to the next session if not enough embedding points
+                                print(
+                                    f"[INFO] Not enough embedding points — skipping {method_name} "
+                                    f"pipeline for session {session_idx}."
+                                )
+                                pdf.close()
                                 skip_session = False
+                                if method_name == 'CEBRA':
+                                    self.append_nan_values(session_idx, session)
                                 continue
 
-                            if best_embeddings_3d is not None:
-                                embeddings_3d = best_embeddings_3d
+                            if best_embeddings_analysis is not None:
+                                embeddings_analysis = best_embeddings_analysis
+                                embeddings_3d_plot = best_embeddings_3d_plot
+                                if best_embeddings_low_vel is not None:
+                                    embeddings_low_vel = best_embeddings_low_vel
                             else:
-                                # fallback
-                                embeddings_3d = embeddings_high_dim
+                                embeddings_3d_plot = embeddings_analysis if not use_hd_branch else None
 
-                            
+                            embeddings_hd = embeddings_analysis if use_hd_branch else np.nan
+                            embeddings_3d = (
+                                embeddings_3d_plot if use_hd_branch else embeddings_analysis
+                            )
+
+                            if self.run_persistent_homology:
+                                if method_name == 'ISOMAP':
+                                    ph_input = embeddings_analysis
+                                    ph_dim = embeddings_analysis.shape[1]
+                                    ph_label = 'isomap'
+                                elif self.ph_source == 'cebra':
+                                    ph_input = embeddings_analysis
+                                    ph_dim = embeddings_analysis.shape[1]
+                                    ph_label = 'cebra'
+                                elif self.ph_source == 'isomap':
+                                    ph_input = CEBRAUtils.neural_data_to_isomap(
+                                        neural_data_full_trial,
+                                        n_neighbors=self.ph_isomap_n_neighbors,
+                                        n_components=self.ph_isomap_n_components,
+                                    )
+                                    ph_dim = ph_input.shape[1]
+                                    ph_label = 'isomap'
+                                else:
+                                    raise ValueError(
+                                        f"ph_source must be 'cebra' or 'isomap', got {self.ph_source!r}"
+                                    )
+
+                                H0_value, H1_value, betti_0, betti_1 = CEBRAUtils.run_persistent_homology(
+                                    embeddings=ph_input,
+                                    session_idx=session_idx,
+                                    session=session,
+                                    results_save_path=session_base_path,
+                                    dimension=ph_dim,
+                                    source_label=ph_label,
+                                )
+                            else:
+                                H0_value = -1
+                                H1_value = -1
+                                betti_0 = -1
+                                betti_1 = -1
 
                             # Compute SI with true angle
                             SI_score_true = CEBRAUtils.compute_SI_and_plot(
-                                embeddings=embeddings_3d,
+                                embeddings=embeddings_analysis,
                                 behav_var=binned_true_angle_rad,
                                 params=SI_params,
                                 behav_var_name='True_Angle',
-                                save_dir=os.path.join(
-                                    os.path.dirname(pdf_filename),
-                                    'SI_Plots'
-                                ),
+                                save_dir=SI_plots_path,
                                 session_idx=session_idx,
-                                dimensions_3=True,
+                                dimensions_3=(embeddings_analysis.shape[1] == 3),
                                 pdf=pdf,
                                 num_used_clusters=num_used_cluster
                             )
 
-                            #Fit principal curve (SPUD)
+                            # Fit principal curve (SPUD) on analysis embeddings
                             fit_params = {
                                 'dalpha': 0.005,
                                 'knot_order': 'nearest',
@@ -2330,36 +3415,45 @@ class CEBRAAnalysis:
                                 'len_coeff': 2,
                                 'density_coeff': 2,
                                 'delta': 0.1
-                            }           
+                            }
 
                             principal_curve_3d, principal_curve_3d_pre, curve_params_3d = CEBRAUtils.fit_spud_to_cebra(
-                                embeddings=embeddings_3d,
+                                embeddings=embeddings_analysis,
                                 ref_angle=binned_true_angle_rad_unwrap,
                                 session_idx=session_idx,
                                 session=session,
-                                results_save_path=os.path.join(os.path.dirname(pdf_filename)),
+                                results_save_path=(
+                                    session_base_path
+                                    if self.plot_embedding_figures and not use_hd_branch
+                                    else None
+                                ),
                                 fit_params=fit_params,
-                                dimension_3d=1,
+                                dimension_3d=(
+                                    1 if self.plot_embedding_figures and not use_hd_branch else None
+                                ),
                                 verbose=False
                             )
 
                             if principal_curve_3d is None:
-                                print("[INFO] Detected knots were too close or"
-                                      "Skipping the entire session and writing NaNs.")
-
-                                self.append_nan_values(session_idx, session)
-
-                                # Continue to the next session if principal curve is None 
+                                print(
+                                    f"[INFO] SPUD fit failed — skipping {method_name} "
+                                    f"pipeline for session {session_idx}."
+                                )
+                                pdf.close()
+                                if method_name == 'CEBRA':
+                                    self.append_nan_values(session_idx, session)
                                 continue
 
                             # Distance to principal curve
-                            mean_dist_to_spline, distances_to_spline = CEBRAUtils.mean_dist_to_spline(embeddings_3d, principal_curve_3d)
+                            mean_dist_to_spline, distances_to_spline = CEBRAUtils.mean_dist_to_spline(
+                                embeddings_analysis, principal_curve_3d
+                            )
                             print("dists to spline")
                             print(distances_to_spline[:20])
 
-                            # Decode angles
+                            # Decode angles from analysis embeddings + spline
                             decoded_angles, _ = CEBRAUtils.decode_hipp_angle_spline(
-                                embeddings=embeddings_3d,
+                                embeddings=embeddings_analysis,
                                 principal_curve=principal_curve_3d,
                                 tt=curve_params_3d,
                                 true_angles=binned_true_angle_rad_unwrap
@@ -2367,7 +3461,7 @@ class CEBRAAnalysis:
                             # Shuffled
                             shuffled_true = np.random.permutation(binned_true_angle_rad)
                             shuffled_decoded_angles, _ = CEBRAUtils.decode_hipp_angle_spline(
-                                embeddings=embeddings_3d,
+                                embeddings=embeddings_analysis,
                                 principal_curve=principal_curve_3d,
                                 tt=curve_params_3d,
                                 true_angles=shuffled_true
@@ -2418,27 +3512,43 @@ class CEBRAAnalysis:
                             )
 
             
-                            CEBRAUtils.plot_embeddings_static(
-                                embeddings = embeddings_3d,
-                                embeddings_low_vel = embeddings_low_vel,
-                                principal_curve = principal_curve_3d,
-                                behav_var_name='Low Vel',  
-                                behav_var=binned_hipp_angle_rad,
-                                session_idx=session_idx,
-                                save_path=anim_save_path
-                            )
+                            if self.plot_embedding_figures:
+                                if use_hd_branch:
+                                    principal_curve_plot, _, _ = CEBRAUtils.fit_spud_to_cebra(
+                                        embeddings=embeddings_3d_plot,
+                                        ref_angle=binned_true_angle_rad_unwrap,
+                                        session_idx=session_idx,
+                                        session=session,
+                                        results_save_path=session_base_path,
+                                        fit_params=fit_params,
+                                        dimension_3d=1,
+                                        verbose=False,
+                                    )
+                                    plot_embeddings = embeddings_3d_plot
+                                else:
+                                    principal_curve_plot = principal_curve_3d
+                                    plot_embeddings = embeddings_analysis
 
+                                CEBRAUtils.plot_embeddings_static(
+                                    embeddings=plot_embeddings,
+                                    embeddings_low_vel=embeddings_low_vel,
+                                    principal_curve=principal_curve_plot,
+                                    behav_var_name='Low Vel',
+                                    behav_var=binned_hipp_angle_rad,
+                                    session_idx=session_idx,
+                                    save_path=anim_save_path
+                                )
 
-                            CEBRAUtils.plot_embeddings_interactive(
-                                embeddings=embeddings_3d,
-                                embeddings_low_vel=embeddings_low_vel,
-                                principal_curve=principal_curve_3d,
-                                behav_var_name="Low Velocity Embeddings",
-                                behav_var=binned_hipp_angle_rad,
-                                session_idx=session_idx,
-                                html_filename="embeddings_3d.html",
-                                save_path=anim_save_path
-                            )
+                                CEBRAUtils.plot_embeddings_interactive(
+                                    embeddings=plot_embeddings,
+                                    embeddings_low_vel=embeddings_low_vel,
+                                    principal_curve=principal_curve_plot,
+                                    behav_var_name="Low Velocity Embeddings",
+                                    behav_var=binned_hipp_angle_rad,
+                                    session_idx=session_idx,
+                                    html_filename="embeddings_3d.html",
+                                    save_path=anim_save_path
+                                )
 
 
 
@@ -2456,6 +3566,32 @@ class CEBRAAnalysis:
                             mean_H_diff = np.mean(np.abs(binned_est_gain[:min_len] - decode_H[:min_len]))
                             std_H_diff = np.std(binned_est_gain[:min_len] - decode_H[:min_len])
 
+                            CEBRAUtils.plot_Hs_over_time(
+                                est_H=binned_est_gain,
+                                decode_H=decode_H,
+                                session_idx=session_idx,
+                                session=session,
+                                save_path=H_plot_path,
+                                tag="no_ma",
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
+                                pdf=pdf,
+                            )
+
+                            for ma_window in (5, 20, 50, 100, 200):
+                                CEBRAUtils.plot_Hs_moving_avg(
+                                    est_H=binned_est_gain,
+                                    decode_H=decode_H,
+                                    session_idx=session_idx,
+                                    session=session,
+                                    save_path=H_plot_path,
+                                    tag="no_vel",
+                                    window_size=ma_window,
+                                    SI_score=best_SI_score_hipp,
+                                    decode_err=mean_H_diff,
+                                    pdf=pdf,
+                                )
+
                             # Behav vars over lapss
                             lap_number, sorted_decode_H, sorted_lap_number = CEBRAUtils.get_var_over_lap(
                                 var=decode_H, true_angle=binned_true_angle_rad_unwrap
@@ -2465,6 +3601,15 @@ class CEBRAAnalysis:
                             )
                             _, sorted_vel, _ = CEBRAUtils.get_var_over_lap(
                                 var=vel, true_angle=binned_true_angle_rad_unwrap
+                            )
+                            # Accel from 1s-bin velocity smoothed ±3 nearest bins (window=7)
+                            from scipy.ndimage import uniform_filter1d
+                            vel_smooth = uniform_filter1d(
+                                np.asarray(binned_vel, dtype=float), size=7, mode='nearest'
+                            )
+                            accel = np.gradient(vel_smooth)
+                            _, sorted_accel, _ = CEBRAUtils.get_var_over_lap(
+                                var=accel, true_angle=binned_true_angle_rad_unwrap
                             )
                             # Hipp frame
                             hipp_lap_number, hipp_decode_H, hipp_sorted_lap_number = CEBRAUtils.get_var_over_lap(
@@ -2483,10 +3628,54 @@ class CEBRAAnalysis:
                                 session=session,
                                 save_path=H_plot_path,    
                                 tag="no_ma",
-                                SI_score=SI_score_hipp,
-                                decode_err=mean_angle_diff,
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
                                 pdf=pdf
                             )
+
+                            CEBRAUtils.plot_Hs_over_laps_accel_heatmap(
+                                decode_H=sorted_decode_H,
+                                lap_number=sorted_lap_number,
+                                acceleration=sorted_accel,
+                                est_H=sorted_H_est,
+                                session_idx=session_idx,
+                                session=session,
+                                save_path=H_plot_path,
+                                tag="no_ma",
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
+                                pdf=pdf,
+                            )
+
+                            for lap_ma_window in (0.5, 1, 3, 6):
+                                lap_tag = f"ma_{str(lap_ma_window).replace('.', 'p')}_lap_no_vel"
+                                CEBRAUtils.plot_Hs_over_laps(
+                                    est_H=sorted_H_est,
+                                    decode_H=sorted_decode_H,
+                                    lap_number=sorted_lap_number,
+                                    session_idx=session_idx,
+                                    session=session,
+                                    save_path=H_plot_path,
+                                    tag=lap_tag,
+                                    lap_ma_window=lap_ma_window,
+                                    SI_score=best_SI_score_hipp,
+                                    decode_err=mean_H_diff,
+                                    pdf=pdf,
+                                )
+                                CEBRAUtils.plot_Hs_over_laps_accel_heatmap(
+                                    decode_H=sorted_decode_H,
+                                    lap_number=sorted_lap_number,
+                                    acceleration=sorted_accel,
+                                    est_H=sorted_H_est,
+                                    session_idx=session_idx,
+                                    session=session,
+                                    save_path=H_plot_path,
+                                    tag=lap_tag,
+                                    lap_ma_window=lap_ma_window,
+                                    SI_score=best_SI_score_hipp,
+                                    decode_err=mean_H_diff,
+                                    pdf=pdf,
+                                )
 
                             CEBRAUtils.plot_Hs_over_laps_interactive(
                                 est_H=sorted_H_est,
@@ -2497,8 +3686,8 @@ class CEBRAAnalysis:
                                 session=session,
                                 save_path=H_plot_path,
                                 tag='vel_no_ma',
-                                SI_score=SI_score_hipp,
-                                decode_err=mean_angle_diff,
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
                                 mean_diff=mean_H_diff,
                                 std_diff=std_H_diff,
                                 behav_var_name="None"
@@ -2514,8 +3703,8 @@ class CEBRAAnalysis:
                                 session=session,
                                 save_path=H_plot_path,    
                                 tag="ma_20_sec",
-                                SI_score=SI_score_hipp,
-                                decode_err=mean_angle_diff,
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
                                 pdf=pdf
                             )
 
@@ -2528,8 +3717,8 @@ class CEBRAAnalysis:
                                 session=session,
                                 save_path=H_plot_path,
                                 tag='vel_ma_20',
-                                SI_score=SI_score_hipp,
-                                decode_err=mean_angle_diff,
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
                                 mean_diff=mean_H_diff,
                                 std_diff=std_H_diff,
                                 behav_var_name="None"
@@ -2545,8 +3734,8 @@ class CEBRAAnalysis:
                                 save_path=H_plot_path,
                                 tag='vel_ma_20',
                                 window_size=5,
-                                SI_score=SI_score_hipp,
-                                decode_err=mean_angle_diff,
+                                SI_score=best_SI_score_hipp,
+                                decode_err=mean_H_diff,
                                 pdf=pdf
                             )
 
@@ -2573,11 +3762,16 @@ class CEBRAAnalysis:
                                 neural_data_full_trial=neural_data_full_trial,
                                 neural_data_fit=neural_data_fit,
                                 neural_data_low_vel=neural_data_low_vel,
-                                embeddings_low_vel=embeddings_low_vel,
+                                embeddings_low_vel=(
+                                    embeddings_low_vel
+                                    if embeddings_low_vel is not None
+                                    else np.nan
+                                ),
                                 high_vel_mask = high_vel_mask,
                                 neural_data_land_off=neural_data_land_off,
                                 neural_data_land_on=neural_data_land_on,
                                 embeddings_3d=embeddings_3d,
+                                embeddings_hd=embeddings_hd,
                                 H0_value=H0_value,
                                 H1_value=H1_value,
                                 betti_0=betti_0,
@@ -2611,12 +3805,12 @@ class CEBRAAnalysis:
                                 SI_score_hipp=best_SI_score_hipp,
                                 SI_score_true=SI_score_true,
                                 mean_H_difference=mean_H_diff,
-                                std_H_difference=std_H_diff
+                                std_H_difference=std_H_diff,
+                                embedding_method=method_name,
                             )
                             
                             self.sessions_data.append(session_data)
-
-                        pdf.close()
+                            pdf.close()
 
                     
                     except AttributeError as e:
@@ -2631,7 +3825,7 @@ def main():
     Entry point to run the entire analysis.
     """
 
-    save_folder = 'thesis_results'
+    save_folder = 'check_session_41'
 
     #Run analysis with no including when landmarks/optic flow are off
     # analysis_train_land_on = CEBRAAnalysis(
@@ -2702,17 +3896,59 @@ def main():
     analysis_full_trial_2 = CEBRAAnalysis(
         session_choose=False,
         max_num_reruns=1,
-        run_persistent_homology=False,
+        run_persistent_homology=True,
+        ph_source='cebra',
         include_land_off=True,
         whole_trial_embeddings=True,
         save_folder=save_folder,
-        trial_type='full_trial_2',
+        trial_type='clustered',
         data_source='clustered',
-        temperature_list=[1]
+        temperature_list=[1.5],
+        cebra_output_dimension=3,  # 10D for PH, spline, decoding, H; separate 3D fit for plots only
+        plot_embedding_figures=True,  # set False to skip 3D embedding/spline figures
+        run_isomap_analysis=False,
+        isomap_n_components=10,
+        isomap_n_neighbors=5,
+        # Outlier interpolation mode:
+        #   'linear' — original method: straight-line interp in embedding space
+        #   'spline' — new method: fit SPUD on inliers first, then project outlier
+        #              runs onto the ring manifold before downstream analysis
+        outlier_interp_mode='linear',
     )
+
+
 
     analysis_full_trial_2.run_analysis()
     dict_analysis_full_trial_2 = analysis_full_trial_2.get_results_dict()
+
+
+
+
+    # analysis_full_trial_1 = CEBRAAnalysis(
+    #     session_choose=False,
+    #     max_num_reruns=1,
+    #     run_persistent_homology=True,
+    #     ph_source='cebra',
+    #     include_land_off=True,
+    #     whole_trial_embeddings=True,
+    #     save_folder=save_folder,
+    #     trial_type='unclustered',
+    #     data_source='unclustered',
+    #     temperature_list=[1.5],
+    #     cebra_output_dimension=3,  # 10D for PH, spline, decoding, H; separate 3D fit for plots only
+    #     plot_embedding_figures=True,  # set False to skip 3D embedding/spline figures
+    #     run_isomap_analysis=False,
+    #     isomap_n_components=10,
+    #     isomap_n_neighbors=5,
+    #     # Outlier interpolation mode:
+    #     #   'linear' — original method: straight-line interp in embedding space
+    #     #   'spline' — new method: fit SPUD on inliers first, then project outlier
+    #     #              runs onto the ring manifold before downstream analysis
+    #     outlier_interp_mode='linear',
+    # )
+
+    # analysis_full_trial_1.run_analysis()
+    # dict_analysis_full_trial_1 = analysis_full_trial_1.get_results_dict()
 
 
 
@@ -2784,7 +4020,7 @@ def main():
     # dict_analysis_full_trial_4 = analysis_full_trial_4.get_results_dict()
 
     combined_results = {
-        'full_trial_1': dict_analysis_full_trial_1,
+        # 'full_trial_1': dict_analysis_full_trial_1,
         'full_trial_2': dict_analysis_full_trial_2,
         # 'full_trial_4': dict_analysis_full_trial_4
     }
